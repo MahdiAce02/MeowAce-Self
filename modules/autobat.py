@@ -109,7 +109,7 @@ async def autobat_command(ev):
             f"⏱️ تاخیر ارسال ایموجی (delay): `{delay_val} ثانیه`\n\n"
             f"💡 **راهنما:**\n"
             f"▸ `/autobat on` / `/autobat off` ── فعال/غیرفعال‌سازی در این چت\n"
-            f"▸ `/autobat delay [0-10]` ── تنظیم تاخیر ارسال (ثانیه)\n"
+            f"▸ `/autobat delay [0-115]` ── تنظیم تاخیر ارسال (ثانیه)\n"
             f"▸ `/autobat list` ── نمایش لیست کد → ایموجی\n\n"
             f"✋ **حالت دستی:** روی پیام خفاش ریپلای بزن و بنویس `batt` — پیامت پاک میشه و ایموجی درستش ارسال میشه."
         )
@@ -129,13 +129,13 @@ async def autobat_command(ev):
         await ev.edit("🦇 **شکار خودکار خفاش در این چت غیرفعال شد.** 🔴")
     elif sub == "delay":
         if len(toks) >= 3 and toks[2].isdigit():
-            val = max(0, min(10, int(convert_persian_digits(toks[2]))))
+            val = max(0, min(115, int(convert_persian_digits(toks[2]))))
             cfg["delay"] = val
             all_cfg[cid] = cfg
             set_bat_cfg(me_id, all_cfg)
             await ev.edit(f"⏱️ **تاخیر شکار خفاش روی `{val}` ثانیه تنظیم شد.**")
         else:
-            await ev.edit("⚠️ **لطفا یک عدد بین ۰ تا ۱۰ وارد کنید.** (مثال: `/autobat delay 2`)")
+            await ev.edit("⚠️ **لطفا یک عدد بین 0 تا 115 وارد کنید.** (مثال: `/autobat delay 2`)")
     elif sub == "list":
         lines = ["🦇 **لیست کد → ایموجی خفاش‌ها:**\n"]
         for code in sorted(BAT_EMOJI.keys()):
