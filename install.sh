@@ -153,11 +153,14 @@ do_relogin() {
 do_update() {
     echo -e "${CYAN}🔄 Fetching latest source code from GitHub...${NC}"
     sudo systemctl stop meowace-self 2>/dev/null
+    pkill -f "$DIR/main.py" 2>/dev/null
+
+    git config --global --add safe.directory "$DIR" 2>/dev/null
 
     if [ -d ".git" ]; then
         git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || git pull
         if [ $? -ne 0 ]; then
-            echo -e "${RED}⚠️ Git pull failed. Please check your git status or network connection.${NC}"
+            echo -e "${RED}⚠️ Git pull failed. Checking status...${NC}"
         else
             echo -e "${GREEN}📥 Source code updated successfully.${NC}"
         fi
@@ -165,14 +168,22 @@ do_update() {
         echo -e "${RED}❌ .git repository not found! Cannot pull updates.${NC}"
     fi
 
+    # Clear bytecode cache
+    find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null
+    find . -type f -name "*.pyc" -delete 2>/dev/null
+
     if [ -d "venv" ]; then
         echo -e "${CYAN}📦 Updating Python dependencies...${NC}"
         venv/bin/pip install -q --upgrade pip 2>/dev/null
         venv/bin/pip install -q -r requirements.txt
     fi
 
+    sudo systemctl daemon-reload
     sudo systemctl restart meowace-self
     echo -e "${GREEN}✅ Update finished & service restarted! (Session preserved)${NC}"
+    
+    # خروج تمیز برای جلوگیری از خطای بافر در Bash
+    exit 0
 }
 
 do_uninstall() {
@@ -318,10 +329,6 @@ case "$1" in
             8) do_multisession_config ;;
             0) exit 0 ;;
             *) echo -e "${RED}Invalid choice.${NC}" ;;
-        esac
-        ;;
-esac
-d choice.${NC}" ;;
         esac
         ;;
 esac
