@@ -12,10 +12,10 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-# Ensure Python 3
-if ! command -v python3 &>/dev/null; then
-    echo -e "${YELLOW}⚙️ Installing python3 & dependencies...${NC}"
-    sudo apt update && sudo apt install -y python3 python3-pip python3-venv
+# Ensure Python 3 & Git
+if ! command -v python3 &>/dev/null || ! command -v git &>/dev/null; then
+    echo -e "${YELLOW}⚙️ Installing python3, git & dependencies...${NC}"
+    sudo apt update && sudo apt install -y python3 python3-pip python3-venv git
 fi
 
 PY="python3"
@@ -151,13 +151,28 @@ do_relogin() {
 }
 
 do_update() {
-    echo -e "${CYAN}🔄 Updating dependencies & restarting service...${NC}"
+    echo -e "${CYAN}🔄 Fetching latest source code from GitHub...${NC}"
     sudo systemctl stop meowace-self 2>/dev/null
+
+    if [ -d ".git" ]; then
+        git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || git pull
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}⚠️ Git pull failed. Please check your git status or network connection.${NC}"
+        else
+            echo -e "${GREEN}📥 Source code updated successfully.${NC}"
+        fi
+    else
+        echo -e "${RED}❌ .git repository not found! Cannot pull updates.${NC}"
+    fi
+
     if [ -d "venv" ]; then
+        echo -e "${CYAN}📦 Updating Python dependencies...${NC}"
+        venv/bin/pip install -q --upgrade pip 2>/dev/null
         venv/bin/pip install -q -r requirements.txt
     fi
+
     sudo systemctl restart meowace-self
-    echo -e "${GREEN}✅ Source code updated & service restarted! (Session preserved)${NC}"
+    echo -e "${GREEN}✅ Update finished & service restarted! (Session preserved)${NC}"
 }
 
 do_uninstall() {
@@ -303,6 +318,10 @@ case "$1" in
             8) do_multisession_config ;;
             0) exit 0 ;;
             *) echo -e "${RED}Invalid choice.${NC}" ;;
+        esac
+        ;;
+esac
+d choice.${NC}" ;;
         esac
         ;;
 esac
