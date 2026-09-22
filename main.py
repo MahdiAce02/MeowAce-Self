@@ -13,6 +13,7 @@ from modules.autofridge import autofridge_command, resume_autofridge_tasks, get_
 from modules.show import show_command, get_show_mode
 from modules.sched import sched_command
 from modules.alias import alias_command, resolve_alias
+from modules.info import info_command
 from modules.proxy import get_proxy_kwargs
 
 # configuration filenames
@@ -102,6 +103,7 @@ async def status_command(ev):
         f"▸ `/show` ── خاموش/روشن کردن پاسخ به دستورات\n"
         f"▸ `/sched` ── زمانبندی پیام روی سرور تلگرام\n"
         f"▸ `/alias` ── تعریف اسم کوتاه و میانبر دستورات\n"
+        f"▸ `/info` ── دریافت آیدی و مشخصات کاربر/چت (با ریپلای یا یوزرنیم)\n"
         f"▸ `/status` ── مشاهده وضعیت در این چت"
     )
     await ev.edit(msg_out)
@@ -193,6 +195,10 @@ async def main():
     @client.on(events.NewMessage(pattern=r'(?i)^[/.=]?alias(?:\s+(.+))?$'))
     async def _alias_h(ev):
         await alias_command(ev)
+
+    @client.on(events.NewMessage(pattern=r'(?i)^[/.=!]?(?:info|id)(?:\s+(.+))?$'))
+    async def _info_h(ev):
+        await info_command(ev)
 
     @client.on(events.NewMessage(pattern='(?i)^/?(status|meowhelp|help)($|\\s+)'))
     async def _status_h(ev):

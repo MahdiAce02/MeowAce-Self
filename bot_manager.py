@@ -24,6 +24,7 @@ from multisession import (
 )
 from modules.proxy import get_proxy_kwargs
 from modules.utils import convert_persian_digits
+from modules.info import get_info_text_and_entity
 
 user_login_states = {}
 user_admin_states = {}
@@ -41,7 +42,7 @@ def get_main_menu_buttons(user_id: int, bot_config: dict, bot_data: dict):
     else:
         buttons.append([Button.inline("🔐 ورود / شروع حساب", b"btn_login")])
 
-    buttons.append([Button.inline("📊 وضعیت اشتراک", b"btn_status")])
+    buttons.append([Button.inline("📊 وضعیت اشتراک", b"btn_status"), Button.inline("🔍 استعلام آیدی (Info)", b"btn_info_query")])
 
     mode = bot_config.get("mode", "private")
     public_type = bot_config.get("public_type", "free")
@@ -218,6 +219,27 @@ async def start_bot_manager(main_config: dict):
         )
         await ev.respond(help_text)
 
+    @bot.on(events.NewMessage(pattern=r'^/(?:info|id)(?:\s+(.+))?'))
+    async def _info_cmd(ev):
+        user_id = ev.sender_id
+        bot_cfg = load_bot_config()
+        bot_dt = load_bot_data()
+        parts = (ev.raw_text or "").split(maxsplit=1)
+        arg = parts[1].strip() if len(parts) > 1 else None
+        
+        info_txt, ent, fwd_ent = await get_info_text_and_entity(bot, ev, arg)
+        
+        buttons = []
+        target_uid = getattr(ent, 'id', None) or getattr(fwd_ent, 'id', None)
+        if target_uid and is_admin(user_id, bot_cfg):
+            wl = bot_dt.get("whitelist", [])
+            if target_uid not in wl:
+                buttons.append([Button.inline("➕ افزودن به وایت‌لیست (دسترسی دائم)", f"quick_wl_{target_uid}".encode())])
+            else:
+                buttons.append([Button.inline("➖ حذف از وایت‌لیست", f"quick_unwl_{target_uid}".encode())])
+        buttons.append([Button.inline("🔙 منوی اصلی", b"btn_main_menu")])
+        await ev.respond(info_txt, buttons=buttons)
+
     @bot.on(events.NewMessage(pattern=r'^/start'))
     async def _start_handler(ev):
         user_id = ev.sender_id
@@ -261,6 +283,53 @@ async def start_bot_manager(main_config: dict):
             st_text = format_user_status(user_id, bot_cfg, bot_dt)
             buttons = [[Button.inline("🔙 بازگشت", b"btn_main_menu")]]
             await ev.edit(st_text, buttons=buttons)
+            return
+
+        elif data == "btn_info_query":
+            user_admin_states[user_id] = "awaiting_info_query"
+            await ev.edit(
+                "🔍 **استعلام آیدی و مشخصات کاربر (Info):**\n\n"
+                "جهت دریافت مشخصات و آیدی، یکی از کارهای زیر را انجام دهید:\n"
+                "• **یوزرنیم** فرد را ارسال کنید (مثال: `@username`)\n"
+                "• **آیدی عددی** فرد را وارد کنید (مثال: `5202998534`)\n"
+                "• یا یک پیام از کاربر مورد نظر را به این بات **فوروارد (Forward)** کنید.\n\n"
+                "(جهت لغو، دکمه زیر را لمس کنید)",
+                buttons=[[Button.inline("🔙 بازگشت به منوی اصلی", b"btn_main_menu")]]
+            )
+            return
+
+        elif data.startswith("quick_wl_"):
+            if not is_admin(user_id, bot_cfg): return
+            target_uid = int(data.replace("quick_wl_", ""))
+            if target_uid not in bot_dt["whitelist"]:
+                bot_dt["whitelist"].append(target_uid)
+            uid_str = str(target_uid)
+            bot_dt["users"].setdefault(uid_str, {})
+            bot_dt["users"][uid_str]["subscription_expire"] = -1
+            save_bot_data(bot_dt)
+            await ev.answer("✅ به وایت‌لیست اضافه شد!", alert=True)
+            buttons = [
+                [Button.inline("➖ حذف از وایت‌لیست", f"quick_unwl_{target_uid}".encode())],
+                [Button.inline("🔙 منوی اصلی", b"btn_main_menu")]
+            ]
+            await ev.edit(f"✅ **کاربر `{target_uid}` با موفقیت به وایت‌لیست اضافه شد و دسترسی دائم برای او فعال گردید.**", buttons=buttons)
+            return
+
+        elif data.startswith("quick_unwl_"):
+            if not is_admin(user_id, bot_cfg): return
+            target_uid = int(data.replace("quick_unwl_", ""))
+            if target_uid in bot_dt["whitelist"]:
+                bot_dt["whitelist"].remove(target_uid)
+            uid_str = str(target_uid)
+            if uid_str in bot_dt["users"] and bot_dt["users"][uid_str].get("subscription_expire") == -1:
+                bot_dt["users"][uid_str]["subscription_expire"] = 0
+            save_bot_data(bot_dt)
+            await ev.answer("✅ از وایت‌لیست حذف شد!", alert=True)
+            buttons = [
+                [Button.inline("➕ افزودن به وایت‌لیست", f"quick_wl_{target_uid}".encode())],
+                [Button.inline("🔙 منوی اصلی", b"btn_main_menu")]
+            ]
+            await ev.edit(f"✅ **کاربر `{target_uid}` از وایت‌لیست حذف شد.**", buttons=buttons)
             return
 
         elif data == "btn_trial":
@@ -603,6 +672,26 @@ async def start_bot_manager(main_config: dict):
         text = ev.text.strip() if ev.text else ""
         bot_cfg = load_bot_config()
         bot_dt = load_bot_data()
+
+        # Handle Info Query State or Direct Forward to Bot
+        is_info_query = user_admin_states.get(user_id) == "awaiting_info_query"
+        is_forward = bool(getattr(ev, 'forward', None) or getattr(ev, 'fwd_from', None))
+        if is_info_query or (is_forward and ev.is_private):
+            user_admin_states.pop(user_id, None)
+            target_arg = text if not is_forward else None
+            info_txt, ent, fwd_ent = await get_info_text_and_entity(bot, ev, target_arg)
+            
+            buttons = []
+            target_uid = getattr(ent, 'id', None) or getattr(fwd_ent, 'id', None)
+            if target_uid and is_admin(user_id, bot_cfg):
+                wl = bot_dt.get("whitelist", [])
+                if target_uid not in wl:
+                    buttons.append([Button.inline("➕ افزودن به وایت‌لیست (دسترسی دائم)", f"quick_wl_{target_uid}".encode())])
+                else:
+                    buttons.append([Button.inline("➖ حذف از وایت‌لیست", f"quick_unwl_{target_uid}".encode())])
+            buttons.append([Button.inline("🔙 منوی اصلی", b"btn_main_menu")])
+            await ev.respond(info_txt, buttons=buttons)
+            return
 
         # Handle Admin Input Prompt States
         if user_id in user_admin_states:

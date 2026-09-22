@@ -20,6 +20,7 @@ from modules.autofridge import autofridge_command, resume_autofridge_tasks
 from modules.show import show_command
 from modules.sched import sched_command
 from modules.alias import alias_command, resolve_alias
+from modules.info import info_command
 from modules.proxy import get_proxy_kwargs
 
 # File paths and directory definitions
@@ -213,6 +214,10 @@ def attach_selfbot_handlers(client: TelegramClient, user_id: int) -> None:
     @client.on(events.NewMessage(pattern=r'(?i)^[/.=]?alias(?:\s+(.+))?$'))
     async def _alias_handler(event):
         await alias_command(event)
+
+    @client.on(events.NewMessage(pattern=r'(?i)^[/.=!]?(?:info|id)(?:\s+(.+))?$'))
+    async def _info_handler(event):
+        await info_command(event)
 
     @client.on(events.NewMessage(pattern='(?i)^/?(status|meowhelp|help)($|\\s+)'))
     async def _status_handler(event):
