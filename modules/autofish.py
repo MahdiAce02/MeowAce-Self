@@ -4,6 +4,7 @@ import asyncio
 from telethon import events
 from telethon.errors import RPCError
 from modules.utils import get_chat_lock, convert_persian_digits, load_json_setting, save_json_setting, send_message_safe
+from modules.show import safe_edit_or_silent
 
 fish_tasks = {}
 
@@ -185,7 +186,8 @@ async def autofish_command(ev):
     if len(toks) < 2:
         cur_mode = cfg.get(str(cid), "off")
         st_text = f"`فعال ({cur_mode}) 🟢`" if cur_mode != "off" else "`غیرفعال 🔴`"
-        await ev.edit(
+        await safe_edit_or_silent(
+            ev,
             f"🎣 **ماهیگیری خودکار ربات میویی (AutoFish)**\n\n"
             f"▸ وضعیت در این چت: {st_text}\n\n"
             f"💡 **راهنمای استفاده:**\n"
@@ -202,16 +204,19 @@ async def autofish_command(ev):
         save_fish_cfg(me_id, cfg)
         await stop_autofish(client, cid)
         await start_autofish(client, cid)
-        await ev.edit(f"🎣 **ماهیگیری خودکار با موفقیت فعال شد!** 🟢\n"
-                         f"▸ حالت: `{m}`\n"
-                         f"ℹ️ *در حال ارسال کلمه و شروع چرخه...*")
+        await safe_edit_or_silent(
+            ev,
+            f"🎣 **ماهیگیری خودکار با موفقیت فعال شد!** 🟢\n"
+            f"▸ حالت: `{m}`\n"
+            f"ℹ️ *در حال ارسال کلمه و شروع چرخه...*"
+        )
     elif m == "off":
         if str(cid) in cfg and cfg[str(cid)] != "off":
             cfg[str(cid)] = "off"
             save_fish_cfg(me_id, cfg)
             await stop_autofish(client, cid)
-            await ev.edit("🎣 **ماهیگیری خودکار در این چت غیرفعال شد.** 🔴")
+            await safe_edit_or_silent(ev, "🎣 **ماهیگیری خودکار در این چت غیرفعال شد.** 🔴")
         else:
-            await ev.edit("⚠️ **ماهیگیری خودکار در این چت فعال نیست.**")
+            await safe_edit_or_silent(ev, "⚠️ **ماهیگیری خودکار در این چت فعال نیست.**")
     else:
-        await ev.edit("⚠️ **گزینه نامعتبر است. از `feed`, `sell`, `fridge` یا `off` استفاده کنید.**")
+        await safe_edit_or_silent(ev, "⚠️ **گزینه نامعتبر است. از `feed`, `sell`, `fridge` یا `off` استفاده کنید.**")

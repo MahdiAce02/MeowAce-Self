@@ -1,5 +1,6 @@
 import re
 from modules.utils import load_json_setting, save_json_setting
+from modules.show import safe_edit_or_silent
 
 def load_user_aliases(uid: int) -> dict:
     return load_json_setting(f"aliases_{uid}.json", default={})
@@ -57,7 +58,7 @@ def resolve_alias(uid: int, raw_text: str):
 
     target = al[head]
 
-    chunks = [c.strip() for c in target.split("&&") if c.strip()]
+    chunks = [c.strip() for c in target.split("&&") if c.strip()][:5]
     res = []
     args = rest.split() if rest else []
 
@@ -86,7 +87,8 @@ async def alias_command(ev):
     toks = raw.split(maxsplit=2)
     
     if len(toks) < 2:
-        await ev.edit(
+        await safe_edit_or_silent(
+            ev,
             "🔗 **مدیریت الیاس و میانبر دستورات (Command Alias)**\n\n"
             "💡 **توضیحات:**\n"
             "تعریف اسم کوتاه برای اجرای دستورات دلخواه به همراه پشتیبانی از آرگومان‌ها.\n\n"
@@ -105,32 +107,32 @@ async def alias_command(ev):
     if sub == "add":
         sp = raw.split(maxsplit=3)
         if len(sp) < 4:
-            await ev.edit("⚠️ **راهنما:** `alias add [alias_name] [target_cmd]`\nمثال: `alias add am automeow`")
+            await safe_edit_or_silent(ev, "⚠️ **راهنما:** `alias add [alias_name] [target_cmd]`\nمثال: `alias add am automeow`")
             return
         _, msg = add_alias(me_id, sp[2], sp[3])
-        await ev.edit(msg)
+        await safe_edit_or_silent(ev, msg)
 
     elif sub == "del":
         sp = raw.split(maxsplit=2)
         if len(sp) < 3:
-            await ev.edit("⚠️ **راهنما:** `alias del [alias_name]`")
+            await safe_edit_or_silent(ev, "⚠️ **راهنما:** `alias del [alias_name]`")
             return
         _, msg = delete_alias(me_id, sp[2])
-        await ev.edit(msg)
+        await safe_edit_or_silent(ev, msg)
 
     elif sub == "list":
         al = load_user_aliases(me_id)
         if not al:
-            await ev.edit("⚠️ **هیچ الیاسی ثبت نشده است.**")
+            await safe_edit_or_silent(ev, "⚠️ **هیچ الیاسی ثبت نشده است.**")
             return
 
         out = "🔗 **لیست الیاس‌های فعال شما:**\n\n"
         for i, (k, v) in enumerate(al.items(), 1):
             out += f"{i}. `{k}` ➔ `{v}`\n"
-        await ev.edit(out)
+        await safe_edit_or_silent(ev, out)
 
     elif sub in ["clear", "reset"]:
         clear_aliases(me_id)
-        await ev.edit("✅ **تمامی الیاس‌های ثبت شده پاکسازی شدند.**")
+        await safe_edit_or_silent(ev, "✅ **تمامی الیاس‌های ثبت شده پاکسازی شدند.**")
     else:
-        await ev.edit("⚠️ **دستور نامعتبر. از `add`, `del`, `list` یا `clear` استفاده کنید.**")
+        await safe_edit_or_silent(ev, "⚠️ **دستور نامعتبر. از `add`, `del`, `list` یا `clear` استفاده کنید.**")

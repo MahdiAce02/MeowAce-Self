@@ -227,8 +227,14 @@ async def main():
     async def _status_h(ev):
         await status_command(ev)
 
+    _dispatched_alias_ids = set()
+
     @client.on(events.NewMessage(outgoing=True))
     async def _alias_interceptor(ev):
+        if ev.id in _dispatched_alias_ids:
+            _dispatched_alias_ids.discard(ev.id)
+            return
+
         raw = ev.raw_text or ""
         if not raw:
             return
@@ -239,7 +245,11 @@ async def main():
         if is_alias and cmds:
             for c in cmds:
                 try:
-                    await client.send_message(ev.chat_id, c)
+                    sent = await client.send_message(ev.chat_id, c)
+                    if sent:
+                        _dispatched_alias_ids.add(sent.id)
+                        if len(_dispatched_alias_ids) > 1000:
+                            _dispatched_alias_ids.clear()
                 except RPCError as rpc:
                     print(f"[!] alias send error: {rpc}")
                 except Exception:

@@ -16,6 +16,7 @@ from telethon.errors import (
 from multisession import (
     load_bot_config, save_bot_config,
     load_bot_data, save_bot_data,
+    get_bot_data_lock,
     is_admin, can_user_access,
     start_user_client, stop_user_client,
     get_session_filepath, active_user_clients,
@@ -30,6 +31,34 @@ user_login_states = {}
 user_admin_states = {}
 last_code_request_time = {}
 bot_client_instance = None
+
+async def cleanup_user_login_state(user_id: int):
+    """Safely disconnects MTProto temp_client if existing, and clears login state."""
+    old_st = user_login_states.pop(user_id, None)
+    if old_st and old_st.get("temp_client"):
+        try:
+            await old_st["temp_client"].disconnect()
+        except Exception:
+            pass
+    return old_st
+
+async def login_state_janitor():
+    """Background janitor loop that periodically disconnects stale temp_client connections older than 5 minutes."""
+    while True:
+        try:
+            await asyncio.sleep(60)
+            now = time.time()
+            stale_uids = []
+            for uid, state in list(user_login_states.items()):
+                created_at = state.get("created_at", 0)
+                if state.get("temp_client") and (now - created_at > 300):
+                    stale_uids.append(uid)
+            for uid in stale_uids:
+                await cleanup_user_login_state(uid)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            await asyncio.sleep(10)
 
 TELEGRAM_PRESETS = {
     "macos": {
@@ -98,18 +127,20 @@ async def process_otp_sign_in(ev, user_id: int, otp_code: str, state: dict, main
         await temp_client.disconnect()
 
         uid_str = str(user_id)
-        bot_dt["users"].setdefault(uid_str, {})
-        bot_dt["users"][uid_str]["api_id"] = api_id
-        bot_dt["users"][uid_str]["api_hash"] = api_hash
-        bot_dt["users"][uid_str]["phone"] = phone
-        bot_dt["users"][uid_str]["first_name"] = getattr(me, 'first_name', '') or ''
-        bot_dt["users"][uid_str]["username"] = getattr(me, 'username', '') or ''
-        if device_model: bot_dt["users"][uid_str]["device_model"] = device_model
-        if system_version: bot_dt["users"][uid_str]["system_version"] = system_version
-        if app_version: bot_dt["users"][uid_str]["app_version"] = app_version
-        if lang_code: bot_dt["users"][uid_str]["lang_code"] = lang_code
-        if system_lang_code: bot_dt["users"][uid_str]["system_lang_code"] = system_lang_code
-        save_bot_data(bot_dt)
+        async with get_bot_data_lock():
+            bot_dt = load_bot_data()
+            bot_dt["users"].setdefault(uid_str, {})
+            bot_dt["users"][uid_str]["api_id"] = api_id
+            bot_dt["users"][uid_str]["api_hash"] = api_hash
+            bot_dt["users"][uid_str]["phone"] = phone
+            bot_dt["users"][uid_str]["first_name"] = getattr(me, 'first_name', '') or ''
+            bot_dt["users"][uid_str]["username"] = getattr(me, 'username', '') or ''
+            if device_model: bot_dt["users"][uid_str]["device_model"] = device_model
+            if system_version: bot_dt["users"][uid_str]["system_version"] = system_version
+            if app_version: bot_dt["users"][uid_str]["app_version"] = app_version
+            if lang_code: bot_dt["users"][uid_str]["lang_code"] = lang_code
+            if system_lang_code: bot_dt["users"][uid_str]["system_lang_code"] = system_lang_code
+            save_bot_data(bot_dt)
 
         proxy_kw = get_proxy_kwargs(main_config)
         success, msg = await start_user_client(
@@ -120,7 +151,7 @@ async def process_otp_sign_in(ev, user_id: int, otp_code: str, state: dict, main
             lang_code=lang_code,
             system_lang_code=system_lang_code
         )
-        user_login_states.pop(user_id, None)
+        await cleanup_user_login_state(user_id)
         buttons = get_main_menu_buttons(user_id, bot_cfg, bot_dt)
         if success:
             await bot.send_message(user_id, f"🎉 **ورود با موفقیت انجام شد!**\n{msg}", buttons=buttons)
@@ -159,11 +190,9 @@ async def process_otp_sign_in(ev, user_id: int, otp_code: str, state: dict, main
             buttons=get_otp_numpad_buttons("")
         )
     except Exception as e:
-        try: await temp_client.disconnect()
-        except Exception: pass
+        await cleanup_user_login_state(user_id)
         buttons = get_main_menu_buttons(user_id, bot_cfg, bot_dt)
         await bot.send_message(user_id, f"❌ خطا در ورود: {e}", buttons=buttons)
-        user_login_states.pop(user_id, None)
 
 def get_main_menu_buttons(user_id: int, bot_config: dict, bot_data: dict):
     buttons = []
@@ -333,10 +362,7 @@ async def start_bot_manager(main_config: dict):
     @bot.on(events.NewMessage(pattern=r'^/cancel'))
     async def _cancel_cmd(ev):
         user_id = ev.sender_id
-        old_st = user_login_states.pop(user_id, None)
-        if old_st and old_st.get("temp_client"):
-            try: await old_st["temp_client"].disconnect()
-            except Exception: pass
+        await cleanup_user_login_state(user_id)
         user_admin_states.pop(user_id, None)
         bot_cfg = load_bot_config()
         bot_dt = load_bot_data()
@@ -378,21 +404,22 @@ async def start_bot_manager(main_config: dict):
     async def _start_handler(ev):
         user_id = ev.sender_id
         bot_cfg = load_bot_config()
-        bot_dt = load_bot_data()
         
-        # update user metadata
+        # update user metadata safely under lock
         uid_str = str(user_id)
-        if uid_str not in bot_dt["users"]:
-            bot_dt["users"][uid_str] = {
-                "created_at": time.time(),
-                "trial_used": False,
-                "subscription_expire": 0
-            }
         sender = await ev.get_sender()
-        if sender:
-            bot_dt["users"][uid_str]["first_name"] = getattr(sender, 'first_name', '') or ''
-            bot_dt["users"][uid_str]["username"] = getattr(sender, 'username', '') or ''
-        save_bot_data(bot_dt)
+        async with get_bot_data_lock():
+            bot_dt = load_bot_data()
+            if uid_str not in bot_dt["users"]:
+                bot_dt["users"][uid_str] = {
+                    "created_at": time.time(),
+                    "trial_used": False,
+                    "subscription_expire": 0
+                }
+            if sender:
+                bot_dt["users"][uid_str]["first_name"] = getattr(sender, 'first_name', '') or ''
+                bot_dt["users"][uid_str]["username"] = getattr(sender, 'username', '') or ''
+            save_bot_data(bot_dt)
 
         welcome_text = (
             f"👋 **سلام {sender.first_name if sender else ''}! به ربات مدیریت MeowAce-Self خوش آمدید.**\n\n"
@@ -435,12 +462,14 @@ async def start_bot_manager(main_config: dict):
         elif data.startswith("quick_wl_"):
             if not is_admin(user_id, bot_cfg): return
             target_uid = int(data.replace("quick_wl_", ""))
-            if target_uid not in bot_dt["whitelist"]:
-                bot_dt["whitelist"].append(target_uid)
-            uid_str = str(target_uid)
-            bot_dt["users"].setdefault(uid_str, {})
-            bot_dt["users"][uid_str]["subscription_expire"] = -1
-            save_bot_data(bot_dt)
+            async with get_bot_data_lock():
+                bot_dt = load_bot_data()
+                if target_uid not in bot_dt["whitelist"]:
+                    bot_dt["whitelist"].append(target_uid)
+                uid_str = str(target_uid)
+                bot_dt["users"].setdefault(uid_str, {})
+                bot_dt["users"][uid_str]["subscription_expire"] = -1
+                save_bot_data(bot_dt)
             await ev.answer("✅ به وایت‌لیست اضافه شد!", alert=True)
             buttons = [
                 [Button.inline("➖ حذف از وایت‌لیست", f"quick_unwl_{target_uid}".encode())],
@@ -452,12 +481,14 @@ async def start_bot_manager(main_config: dict):
         elif data.startswith("quick_unwl_"):
             if not is_admin(user_id, bot_cfg): return
             target_uid = int(data.replace("quick_unwl_", ""))
-            if target_uid in bot_dt["whitelist"]:
-                bot_dt["whitelist"].remove(target_uid)
-            uid_str = str(target_uid)
-            if uid_str in bot_dt["users"] and bot_dt["users"][uid_str].get("subscription_expire") == -1:
-                bot_dt["users"][uid_str]["subscription_expire"] = 0
-            save_bot_data(bot_dt)
+            async with get_bot_data_lock():
+                bot_dt = load_bot_data()
+                if target_uid in bot_dt["whitelist"]:
+                    bot_dt["whitelist"].remove(target_uid)
+                uid_str = str(target_uid)
+                if uid_str in bot_dt["users"] and bot_dt["users"][uid_str].get("subscription_expire") == -1:
+                    bot_dt["users"][uid_str]["subscription_expire"] = 0
+                save_bot_data(bot_dt)
             await ev.answer("✅ از وایت‌لیست حذف شد!", alert=True)
             buttons = [
                 [Button.inline("➕ افزودن به وایت‌لیست", f"quick_wl_{target_uid}".encode())],
@@ -473,21 +504,23 @@ async def start_bot_manager(main_config: dict):
                 return
             
             uid_str = str(user_id)
-            u_info = bot_dt["users"].get(uid_str, {})
-            if u_info.get("trial_used", False):
-                await ev.answer("❌ شما قبلاً از مهلت تست رایگان استفاده کرده‌اید.", alert=True)
-                return
-
             dur_hrs = trial_cfg.get("duration_hours", 24)
-            add_sec = dur_hrs * 3600
-            curr_exp = u_info.get("subscription_expire", 0)
-            base_t = max(time.time(), curr_exp)
-            new_exp = base_t + add_sec
-            
-            u_info["subscription_expire"] = new_exp
-            u_info["trial_used"] = True
-            bot_dt["users"][uid_str] = u_info
-            save_bot_data(bot_dt)
+            async with get_bot_data_lock():
+                bot_dt = load_bot_data()
+                u_info = bot_dt["users"].get(uid_str, {})
+                if u_info.get("trial_used", False):
+                    await ev.answer("❌ شما قبلاً از مهلت تست رایگان استفاده کرده‌اید.", alert=True)
+                    return
+
+                add_sec = dur_hrs * 3600
+                curr_exp = u_info.get("subscription_expire", 0)
+                base_t = max(time.time(), curr_exp)
+                new_exp = base_t + add_sec
+                
+                u_info["subscription_expire"] = new_exp
+                u_info["trial_used"] = True
+                bot_dt["users"][uid_str] = u_info
+                save_bot_data(bot_dt)
 
             await ev.edit(
                 f"🎉 **تست رایگان {dur_hrs} ساعته برای شما با موفقیت فعال شد!**\n\n"
@@ -526,12 +559,14 @@ async def start_bot_manager(main_config: dict):
 
         elif data == "req_payment":
             pid = f"pay_{user_id}_{int(time.time())}"
-            bot_dt["pending_payments"][pid] = {
-                "user_id": user_id,
-                "status": "awaiting_admin_approval",
-                "created_at": time.time()
-            }
-            save_bot_data(bot_dt)
+            async with get_bot_data_lock():
+                bot_dt = load_bot_data()
+                bot_dt["pending_payments"][pid] = {
+                    "user_id": user_id,
+                    "status": "awaiting_admin_approval",
+                    "created_at": time.time()
+                }
+                save_bot_data(bot_dt)
 
             await ev.edit(
                 "⏳ **درخواست خرید شما برای مدیر ارسال شد.**\nلطفاً شکیبا باشید، به محض تایید مدیر شماره کارت خدمت شما ارسال خواهد شد.",
@@ -542,20 +577,23 @@ async def start_bot_manager(main_config: dict):
 
         elif data.startswith("pay_app1_"):
             pid = data.replace("pay_app1_", "")
-            pay_info = bot_dt.get("pending_payments", {}).get(pid)
-            if not pay_info:
-                await ev.answer("درخواست یافت نشد.", alert=True)
-                return
+            target_uid = None
+            async with get_bot_data_lock():
+                bot_dt = load_bot_data()
+                pay_info = bot_dt.get("pending_payments", {}).get(pid)
+                if not pay_info:
+                    await ev.answer("درخواست یافت نشد.", alert=True)
+                    return
 
-            pay_info["status"] = "awaiting_receipt"
-            save_bot_data(bot_dt)
-            target_uid = pay_info["user_id"]
+                pay_info["status"] = "awaiting_receipt"
+                save_bot_data(bot_dt)
+                target_uid = pay_info["user_id"]
             
             card_num = bot_cfg.get("card_number", "6037997000000000")
             sub_cfg = bot_cfg.get("subscription", {})
             price = sub_cfg.get("price_toman", 50000)
 
-            user_login_states[target_uid] = {"step": "AWAITING_RECEIPT", "payment_id": pid}
+            user_login_states[target_uid] = {"step": "AWAITING_RECEIPT", "payment_id": pid, "created_at": time.time()}
 
             try:
                 await bot.send_message(
@@ -573,8 +611,11 @@ async def start_bot_manager(main_config: dict):
 
         elif data.startswith("pay_rej1_"):
             pid = data.replace("pay_rej1_", "")
-            pay_info = bot_dt.get("pending_payments", {}).pop(pid, None)
-            save_bot_data(bot_dt)
+            pay_info = None
+            async with get_bot_data_lock():
+                bot_dt = load_bot_data()
+                pay_info = bot_dt.get("pending_payments", {}).pop(pid, None)
+                save_bot_data(bot_dt)
             if pay_info:
                 target_uid = pay_info["user_id"]
                 try:
@@ -586,28 +627,32 @@ async def start_bot_manager(main_config: dict):
 
         elif data.startswith("pay_app2_"):
             pid = data.replace("pay_app2_", "")
-            pay_info = bot_dt.get("pending_payments", {}).pop(pid, None)
-            if not pay_info:
-                await ev.answer("پرداخت یافت نشد یا قبلاً پردازش شده.", alert=True)
-                return
+            target_uid = None
+            days = 30
+            async with get_bot_data_lock():
+                bot_dt = load_bot_data()
+                pay_info = bot_dt.get("pending_payments", {}).pop(pid, None)
+                if not pay_info:
+                    await ev.answer("پرداخت یافت نشد یا قبلاً پردازش شده.", alert=True)
+                    return
 
-            target_uid = pay_info["user_id"]
-            uid_str = str(target_uid)
+                target_uid = pay_info["user_id"]
+                uid_str = str(target_uid)
 
-            sub_cfg = bot_cfg.get("subscription", {})
-            days = sub_cfg.get("duration_days", 30)
-            add_sec = days * 86400
+                sub_cfg = bot_cfg.get("subscription", {})
+                days = sub_cfg.get("duration_days", 30)
+                add_sec = days * 86400
 
-            u_info = bot_dt["users"].get(uid_str, {})
-            curr_exp = u_info.get("subscription_expire", 0)
-            base_t = max(time.time(), curr_exp)
-            new_exp = base_t + add_sec
-            
-            u_info["subscription_expire"] = new_exp
-            bot_dt["users"][uid_str] = u_info
-            save_bot_data(bot_dt)
+                u_info = bot_dt["users"].get(uid_str, {})
+                curr_exp = u_info.get("subscription_expire", 0)
+                base_t = max(time.time(), curr_exp)
+                new_exp = base_t + add_sec
+                
+                u_info["subscription_expire"] = new_exp
+                bot_dt["users"][uid_str] = u_info
+                save_bot_data(bot_dt)
 
-            user_login_states.pop(target_uid, None)
+            await cleanup_user_login_state(target_uid)
 
             try:
                 await bot.send_message(
@@ -624,11 +669,14 @@ async def start_bot_manager(main_config: dict):
 
         elif data.startswith("pay_rej2_"):
             pid = data.replace("pay_rej2_", "")
-            pay_info = bot_dt.get("pending_payments", {}).pop(pid, None)
-            save_bot_data(bot_dt)
+            pay_info = None
+            async with get_bot_data_lock():
+                bot_dt = load_bot_data()
+                pay_info = bot_dt.get("pending_payments", {}).pop(pid, None)
+                save_bot_data(bot_dt)
             if pay_info:
                 target_uid = pay_info["user_id"]
-                user_login_states.pop(target_uid, None)
+                await cleanup_user_login_state(target_uid)
                 try:
                     await bot.send_message(target_uid, "❌ **فیش واریزی شما توسط مدیر تایید نشد.**")
                 except Exception:
@@ -666,6 +714,7 @@ async def start_bot_manager(main_config: dict):
             return
 
         elif data == "login_preset_macos":
+            await cleanup_user_login_state(user_id)
             preset = TELEGRAM_PRESETS["macos"]
             user_login_states[user_id] = {
                 "step": "ENTER_PHONE",
@@ -675,7 +724,8 @@ async def start_bot_manager(main_config: dict):
                 "system_version": preset["system_version"],
                 "app_version": preset["app_version"],
                 "lang_code": preset.get("lang_code", "en"),
-                "system_lang_code": preset.get("system_lang_code", "en")
+                "system_lang_code": preset.get("system_lang_code", "en"),
+                "created_at": time.time()
             }
             cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
             await ev.edit(
@@ -693,6 +743,7 @@ async def start_bot_manager(main_config: dict):
             if not s_api_id or not s_api_hash:
                 await ev.answer("❌ API سرور پیکربندی نشده است.", alert=True)
                 return
+            await cleanup_user_login_state(user_id)
             preset = TELEGRAM_PRESETS["server"]
             user_login_states[user_id] = {
                 "step": "ENTER_PHONE",
@@ -702,7 +753,8 @@ async def start_bot_manager(main_config: dict):
                 "system_version": preset["system_version"],
                 "app_version": preset["app_version"],
                 "lang_code": preset.get("lang_code", "en"),
-                "system_lang_code": preset.get("system_lang_code", "en")
+                "system_lang_code": preset.get("system_lang_code", "en"),
+                "created_at": time.time()
             }
             cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
             await ev.edit(
@@ -714,7 +766,8 @@ async def start_bot_manager(main_config: dict):
             return
 
         elif data == "login_custom_creds":
-            user_login_states[user_id] = {"step": "ENTER_API_ID"}
+            await cleanup_user_login_state(user_id)
+            user_login_states[user_id] = {"step": "ENTER_API_ID", "created_at": time.time()}
             cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
             await ev.edit(
                 "🔑 **ورود با API ID و Hash اختصاصی**\n\n"
@@ -725,6 +778,7 @@ async def start_bot_manager(main_config: dict):
             return
 
         elif data == "use_saved_creds":
+            await cleanup_user_login_state(user_id)
             uid_str = str(user_id)
             u_info = bot_dt["users"].get(uid_str, {})
             api_id = u_info.get("api_id")
@@ -738,17 +792,15 @@ async def start_bot_manager(main_config: dict):
                 "system_version": u_info.get("system_version", "macOS 14.4.1"),
                 "app_version": u_info.get("app_version", "10.11"),
                 "lang_code": u_info.get("lang_code", "en"),
-                "system_lang_code": u_info.get("system_lang_code", "en")
+                "system_lang_code": u_info.get("system_lang_code", "en"),
+                "created_at": time.time()
             }
             cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
             await ev.edit("📱 لطفاً **شماره تلفن** حساب تلگرام خود را با کد کشور وارد کنید (مثال: `+989123456789`):", buttons=cancel_btn)
             return
 
         elif data == "cancel_login":
-            old_st = user_login_states.pop(user_id, None)
-            if old_st and old_st.get("temp_client"):
-                try: await old_st["temp_client"].disconnect()
-                except Exception: pass
+            await cleanup_user_login_state(user_id)
             buttons = get_main_menu_buttons(user_id, bot_cfg, bot_dt)
             await ev.edit("❌ فرآیند ورود لغو شد.", buttons=buttons)
             return
@@ -955,24 +1007,28 @@ async def start_bot_manager(main_config: dict):
             elif action == "admin_add_wl":
                 try:
                     target_uid = int(text)
-                    if target_uid not in bot_dt["whitelist"]:
-                        bot_dt["whitelist"].append(target_uid)
-                    uid_str = str(target_uid)
-                    bot_dt["users"].setdefault(uid_str, {})
-                    bot_dt["users"][uid_str]["subscription_expire"] = -1
-                    save_bot_data(bot_dt)
+                    async with get_bot_data_lock():
+                        bot_dt = load_bot_data()
+                        if target_uid not in bot_dt["whitelist"]:
+                            bot_dt["whitelist"].append(target_uid)
+                        uid_str = str(target_uid)
+                        bot_dt["users"].setdefault(uid_str, {})
+                        bot_dt["users"][uid_str]["subscription_expire"] = -1
+                        save_bot_data(bot_dt)
                     await ev.respond(f"✅ کاربر `{target_uid}` با موفقیت به وایت‌لیست اضافه شد (دسترسی دائم فعال شد).")
                 except Exception:
                     await ev.respond("❌ آیدی وارد شده معتبر نیست.")
             elif action == "admin_rem_wl":
                 try:
                     target_uid = int(text)
-                    if target_uid in bot_dt["whitelist"]:
-                        bot_dt["whitelist"].remove(target_uid)
-                    uid_str = str(target_uid)
-                    if uid_str in bot_dt["users"] and bot_dt["users"][uid_str].get("subscription_expire") == -1:
-                        bot_dt["users"][uid_str]["subscription_expire"] = 0
-                    save_bot_data(bot_dt)
+                    async with get_bot_data_lock():
+                        bot_dt = load_bot_data()
+                        if target_uid in bot_dt["whitelist"]:
+                            bot_dt["whitelist"].remove(target_uid)
+                        uid_str = str(target_uid)
+                        if uid_str in bot_dt["users"] and bot_dt["users"][uid_str].get("subscription_expire") == -1:
+                            bot_dt["users"][uid_str]["subscription_expire"] = 0
+                        save_bot_data(bot_dt)
                     await ev.respond(f"✅ کاربر `{target_uid}` از وایت‌لیست حذف شد.")
                 except Exception:
                     await ev.respond("❌ آیدی وارد شده معتبر نیست.")
@@ -982,12 +1038,14 @@ async def start_bot_manager(main_config: dict):
                     target_uid = int(parts[0])
                     days = int(parts[1])
                     uid_str = str(target_uid)
-                    u_info = bot_dt["users"].get(uid_str, {})
-                    curr_exp = u_info.get("subscription_expire", 0)
-                    base_t = max(time.time(), curr_exp)
-                    u_info["subscription_expire"] = base_t + days * 86400
-                    bot_dt["users"][uid_str] = u_info
-                    save_bot_data(bot_dt)
+                    async with get_bot_data_lock():
+                        bot_dt = load_bot_data()
+                        u_info = bot_dt["users"].get(uid_str, {})
+                        curr_exp = u_info.get("subscription_expire", 0)
+                        base_t = max(time.time(), curr_exp)
+                        u_info["subscription_expire"] = base_t + days * 86400
+                        bot_dt["users"][uid_str] = u_info
+                        save_bot_data(bot_dt)
                     await ev.respond(f"✅ {days} روز اشتراک با موفقیت برای کاربر `{target_uid}` فعال شد.")
                 except Exception:
                     await ev.respond("❌ فرمت وارد شده اشتباه است. مثال: `123456789 30`")
@@ -1102,10 +1160,8 @@ async def start_bot_manager(main_config: dict):
                     await temp_client.disconnect()
                     await ev.respond("❌ شماره تلفن وارد شده معتبر نیست. لطفاً مجدداً شماره تلفن را وارد کنید:", buttons=cancel_btn)
                 except Exception as e:
-                    try: await temp_client.disconnect()
-                    except Exception: pass
+                    await cleanup_user_login_state(user_id)
                     await ev.respond(f"❌ خطا در ارسال کد تایید: {e}\nلطفاً مجدداً تلاش کنید.")
-                    user_login_states.pop(user_id, None)
 
             elif step == "ENTER_OTP":
                 try:
@@ -1144,18 +1200,20 @@ async def start_bot_manager(main_config: dict):
                     await temp_client.disconnect()
 
                     uid_str = str(user_id)
-                    bot_dt["users"].setdefault(uid_str, {})
-                    bot_dt["users"][uid_str]["api_id"] = api_id
-                    bot_dt["users"][uid_str]["api_hash"] = api_hash
-                    bot_dt["users"][uid_str]["phone"] = phone
-                    bot_dt["users"][uid_str]["first_name"] = getattr(me, 'first_name', '') or ''
-                    bot_dt["users"][uid_str]["username"] = getattr(me, 'username', '') or ''
-                    if device_model: bot_dt["users"][uid_str]["device_model"] = device_model
-                    if system_version: bot_dt["users"][uid_str]["system_version"] = system_version
-                    if app_version: bot_dt["users"][uid_str]["app_version"] = app_version
-                    if lang_code: bot_dt["users"][uid_str]["lang_code"] = lang_code
-                    if system_lang_code: bot_dt["users"][uid_str]["system_lang_code"] = system_lang_code
-                    save_bot_data(bot_dt)
+                    async with get_bot_data_lock():
+                        bot_dt = load_bot_data()
+                        bot_dt["users"].setdefault(uid_str, {})
+                        bot_dt["users"][uid_str]["api_id"] = api_id
+                        bot_dt["users"][uid_str]["api_hash"] = api_hash
+                        bot_dt["users"][uid_str]["phone"] = phone
+                        bot_dt["users"][uid_str]["first_name"] = getattr(me, 'first_name', '') or ''
+                        bot_dt["users"][uid_str]["username"] = getattr(me, 'username', '') or ''
+                        if device_model: bot_dt["users"][uid_str]["device_model"] = device_model
+                        if system_version: bot_dt["users"][uid_str]["system_version"] = system_version
+                        if app_version: bot_dt["users"][uid_str]["app_version"] = app_version
+                        if lang_code: bot_dt["users"][uid_str]["lang_code"] = lang_code
+                        if system_lang_code: bot_dt["users"][uid_str]["system_lang_code"] = system_lang_code
+                        save_bot_data(bot_dt)
 
                     proxy_kw = get_proxy_kwargs(main_config)
                     success, msg = await start_user_client(
@@ -1166,7 +1224,7 @@ async def start_bot_manager(main_config: dict):
                         lang_code=lang_code,
                         system_lang_code=system_lang_code
                     )
-                    user_login_states.pop(user_id, None)
+                    await cleanup_user_login_state(user_id)
                     buttons = get_main_menu_buttons(user_id, bot_cfg, bot_dt)
                     if success:
                         await ev.respond(f"🎉 **ورود با موفقیت انجام شد!**\n{msg}", buttons=buttons)
@@ -1190,10 +1248,8 @@ async def start_bot_manager(main_config: dict):
                 except PasswordHashInvalidError:
                     await ev.respond("❌ رمز عبور دو مرحله‌ای اشتباه است. لطفاً مجدداً وارد کنید:", buttons=cancel_btn)
                 except Exception as e:
-                    try: await temp_client.disconnect()
-                    except Exception: pass
+                    await cleanup_user_login_state(user_id)
                     await ev.respond(f"❌ خطا در ورود: {e}")
-                    user_login_states.pop(user_id, None)
 
     # Start background auto-resumption and subscription monitor
     asyncio.create_task(resume_all_sessions(main_config))
@@ -1203,6 +1259,7 @@ async def start_bot_manager(main_config: dict):
         except Exception as e:
             print(f"[!] Notification error to {uid}: {e}")
     asyncio.create_task(subscription_monitor_loop(_notify_user))
+    asyncio.create_task(login_state_janitor())
 
     print("[+] MultiSession Management Bot is fully running and ready. Waiting for events...")
     await bot.run_until_disconnected()

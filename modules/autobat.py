@@ -2,6 +2,7 @@ import re
 import asyncio
 from telethon.errors import RPCError
 from modules.utils import load_json_setting, save_json_setting, convert_persian_digits
+from modules.show import safe_edit_or_silent
 
 # کد خفاش -> ایموجی شکار (از لیست کاربر)
 BAT_EMOJI = {
@@ -113,7 +114,7 @@ async def autobat_command(ev):
             f"▸ `/autobat list` ── نمایش لیست کد → ایموجی\n\n"
             f"✋ **حالت دستی:** روی پیام خفاش ریپلای بزن و بنویس `batt` — پیامت پاک میشه و ایموجی درستش ارسال میشه."
         )
-        await ev.edit(msg)
+        await safe_edit_or_silent(ev, msg)
         return
 
     sub = toks[1].strip().lower()
@@ -121,29 +122,29 @@ async def autobat_command(ev):
         cfg["status"] = True
         all_cfg[cid] = cfg
         set_bat_cfg(me_id, all_cfg)
-        await ev.edit("🦇 **شکار خودکار خفاش در این چت فعال شد!** 🟢")
+        await safe_edit_or_silent(ev, "🦇 **شکار خودکار خفاش در این چت فعال شد!** 🟢")
     elif sub == "off":
         cfg["status"] = False
         all_cfg[cid] = cfg
         set_bat_cfg(me_id, all_cfg)
-        await ev.edit("🦇 **شکار خودکار خفاش در این چت غیرفعال شد.** 🔴")
+        await safe_edit_or_silent(ev, "🦇 **شکار خودکار خفاش در این چت غیرفعال شد.** 🔴")
     elif sub == "delay":
         if len(toks) >= 3 and toks[2].isdigit():
             val = max(0, min(115, int(convert_persian_digits(toks[2]))))
             cfg["delay"] = val
             all_cfg[cid] = cfg
             set_bat_cfg(me_id, all_cfg)
-            await ev.edit(f"⏱️ **تاخیر شکار خفاش روی `{val}` ثانیه تنظیم شد.**")
+            await safe_edit_or_silent(ev, f"⏱️ **تاخیر شکار خفاش روی `{val}` ثانیه تنظیم شد.**")
         else:
-            await ev.edit("⚠️ **لطفا یک عدد بین 0 تا 115 وارد کنید.** (مثال: `/autobat delay 2`)")
+            await safe_edit_or_silent(ev, "⚠️ **لطفا یک عدد بین 0 تا 115 وارد کنید.** (مثال: `/autobat delay 2`)")
     elif sub == "list":
         lines = ["🦇 **لیست کد → ایموجی خفاش‌ها:**\n"]
         for code in sorted(BAT_EMOJI.keys()):
             lines.append(f"`{code}` ➔ {BAT_EMOJI[code]}")
         # تلگرام محدودیت طول دارد، خلاصه می‌فرستیم
-        await ev.edit("\n".join(lines))
+        await safe_edit_or_silent(ev, "\n".join(lines))
     else:
-        await ev.edit("⚠️ **دستور نامعتبر. از `on`, `off`, `delay` یا `list` استفاده کنید.**")
+        await safe_edit_or_silent(ev, "⚠️ **دستور نامعتبر. از `on`, `off`, `delay` یا `list` استفاده کنید.**")
 
 async def handle_manual_bat(ev) -> bool:
     """حالت دستی: ریپلای روی پیام خفاش با متن bat -> پاک کردن پیام + ارسال ایموجی.

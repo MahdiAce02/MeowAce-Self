@@ -43,3 +43,33 @@ async def show_command(ev):
             pass
     else:
         await ev.edit("⚠️ **گزینه نامعتبر است. از `/show on` یا `/show off` استفاده کنید.**")
+
+async def safe_edit_or_silent(ev, text: str, parse_mode: str = None, delete_after: float = 1.0):
+    """
+    If show mode is True for this user, edits the message with text.
+    If show mode is False, deletes the message silently after executing command.
+    """
+    client = ev.client
+    me_id = getattr(client, 'uid', None)
+    if not me_id:
+        try:
+            me_id = (await client.get_me()).id
+        except Exception:
+            me_id = 0
+
+    if get_show_mode(me_id):
+        kwargs = {}
+        if parse_mode:
+            kwargs["parse_mode"] = parse_mode
+        try:
+            await ev.edit(text, **kwargs)
+        except Exception:
+            pass
+    else:
+        if delete_after > 0:
+            await asyncio.sleep(delete_after)
+        try:
+            await ev.delete()
+        except Exception:
+            pass
+

@@ -31,6 +31,9 @@ def _check_dir():
     if not os.path.exists("settings"):
         try:
             os.makedirs("settings", exist_ok=True)
+            if hasattr(os, 'chmod'):
+                try: os.chmod("settings", 0o700)
+                except Exception: pass
         except Exception as err:
             print(f"[!] cant create settings dir: {err}")
 
@@ -49,11 +52,18 @@ def load_json_setting(fn: str, default=None):
 def save_json_setting(fn: str, data):
     _check_dir()
     fp = os.path.join("settings", fn)
+    tmp_fp = f"{fp}.tmp_{random.randint(1000, 9999)}"
     try:
-        with open(fp, 'w', encoding='utf-8') as f:
+        with open(tmp_fp, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_fp, fp)
     except Exception as ex:
         print(f"[!] error saving {fn}: {ex}")
+        if os.path.exists(tmp_fp):
+            try: os.remove(tmp_fp)
+            except Exception: pass
 
 async def get_slowmode_delay(client, chat_id: int) -> int:
     try:

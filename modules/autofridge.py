@@ -3,6 +3,7 @@ import asyncio
 from telethon import events
 from telethon.errors import RPCError
 from modules.utils import get_chat_lock, convert_persian_digits, load_json_setting, save_json_setting, send_message_safe
+from modules.show import safe_edit_or_silent
 
 fridge_tasks = {}
 
@@ -230,7 +231,8 @@ async def autofridge_command(ev):
     
     if len(toks) < 2:
         st_str = f"`فعال ({cur}) 🟢`" if cur != "off" else "`غیرفعال 🔴`"
-        await ev.edit(
+        await safe_edit_or_silent(
+            ev,
             f"🧊 **مدیریت خودکار یخچال میویی (AutoFridge)**\n\n"
             f"▸ وضعیت در این چت: {st_str}\n\n"
             f"💡 **راهنما:**\n"
@@ -246,16 +248,19 @@ async def autofridge_command(ev):
         save_fridge_cfg(me_id, cfg)
         await stop_autofridge(client, cid)
         await start_autofridge(client, cid)
-        await ev.edit(f"🧊 **مدیریت خودکار یخچال با موفقیت فعال شد!** 🟢\n"
-                         f"▸ حالت: `{m}`\n"
-                         f"ℹ️ *بررسی یخچال و شروع چرخه...*")
+        await safe_edit_or_silent(
+            ev,
+            f"🧊 **مدیریت خودکار یخچال با موفقیت فعال شد!** 🟢\n"
+            f"▸ حالت: `{m}`\n"
+            f"ℹ️ *بررسی یخچال و شروع چرخه...*"
+        )
     elif m == "off":
         if str(cid) in cfg and cfg[str(cid)] != "off":
             cfg[str(cid)] = "off"
             save_fridge_cfg(me_id, cfg)
             await stop_autofridge(client, cid)
-            await ev.edit("🧊 **مدیریت خودکار یخچال در این چت غیرفعال شد.** 🔴")
+            await safe_edit_or_silent(ev, "🧊 **مدیریت خودکار یخچال در این چت غیرفعال شد.** 🔴")
         else:
-            await ev.edit("⚠️ **مدیریت خودکار یخچال در این چت فعال نیست.**")
+            await safe_edit_or_silent(ev, "⚠️ **مدیریت خودکار یخچال در این چت فعال نیست.**")
     else:
-        await ev.edit("⚠️ **گزینه نامعتبر است. از `sell`, `feed` یا `off` استفاده کنید.**")
+        await safe_edit_or_silent(ev, "⚠️ **گزینه نامعتبر است. از `sell`, `feed` یا `off` استفاده کنید.**")

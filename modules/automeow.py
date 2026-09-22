@@ -6,6 +6,7 @@ import datetime
 from telethon import events
 from telethon.errors import RPCError
 from modules.utils import get_chat_lock, convert_persian_digits, load_json_setting, save_json_setting, send_message_safe
+from modules.show import safe_edit_or_silent
 
 active_meow_loops = {}
 last_sched_times = {}
@@ -281,7 +282,8 @@ async def automeow_command(ev):
         else:
             st_label = "<code>غیرفعال 🔴</code>"
             
-        await ev.edit(
+        await safe_edit_or_silent(
+            ev,
             f"🐱 <b>ربات بازی خودکار میویی (AutoMeow)</b>\n\n"
             f"▸ وضعیت در این چت: {st_label}\n\n"
             f"💡 <b>راهنما:</b>\n"
@@ -297,7 +299,7 @@ async def automeow_command(ev):
         set_chat_meow_mode(me_id, str_cid, "instant", 1)
         await stop_automeow(client, cid)
         await start_automeow(client, cid)
-        await ev.edit("🐱 <b>بازی خودکار میویی (حالت لحظه‌ای ⚡) فعال شد!</b>", parse_mode='html')
+        await safe_edit_or_silent(ev, "🐱 <b>بازی خودکار میویی (حالت لحظه‌ای ⚡) فعال شد!</b>", parse_mode='html')
     elif cmd in ["schedule", "sched"]:
         target_count = 1
         if len(parts) >= 3 and parts[2].isdigit():
@@ -305,7 +307,8 @@ async def automeow_command(ev):
             
         set_chat_meow_mode(me_id, str_cid, "schedule", target_count)
         await stop_automeow(client, cid)
-        await ev.edit(
+        await safe_edit_or_silent(
+            ev,
             f"🐱 <b>بازی خودکار میویی (حالت زماندار 📅 - {target_count} پیام) فعال شد!</b>\n"
             f"ℹ️ <i>پیام اولیه ارسال شد تا پیام‌ها روی سرور تلگرام زمانبندی گردند.</i>",
             parse_mode='html'
@@ -314,6 +317,6 @@ async def automeow_command(ev):
     elif cmd == "off":
         set_chat_meow_mode(me_id, str_cid, "off")
         await stop_automeow(client, cid)
-        await ev.edit("🐱 <b>بازی خودکار میویی در این چت غیرفعال شد.</b> 🔴", parse_mode='html')
+        await safe_edit_or_silent(ev, "🐱 <b>بازی خودکار میویی در این چت غیرفعال شد.</b> 🔴", parse_mode='html')
     else:
-        await ev.edit("⚠️ <b>دستور نامعتبر. از <code>instant</code>, <code>schedule [تعداد]</code> یا <code>off</code> استفاده کنید.</b>", parse_mode='html')
+        await safe_edit_or_silent(ev, "⚠️ <b>دستور نامعتبر. از <code>instant</code>, <code>schedule [تعداد]</code> یا <code>off</code> استفاده کنید.</b>", parse_mode='html')

@@ -1,9 +1,18 @@
+import time
 import asyncio
 from telethon.errors import MessageIdInvalidError, RPCError
 from modules.utils import load_json_setting, save_json_setting
+from modules.show import safe_edit_or_silent
 
-_click_db = {}
+_click_db = {}  # (me_id, cid, msg_id) -> (clicks, timestamp)
 _catch_cfg_cache = {}
+
+def _prune_click_db(now: float):
+    if len(_click_db) > 1000:
+        cutoff = now - 600.0  # 10 minutes
+        to_del = [key for key, (_, ts) in _click_db.items() if ts < cutoff]
+        for key in to_del:
+            _click_db.pop(key, None)
 
 def get_catch_cfg(u_id: int) -> dict:
     if u_id in _catch_cfg_cache:
@@ -44,7 +53,7 @@ async def autocatch_command(ev):
             f"▸ `/autocatch delay [0-10]` ── تنظیم تاخیر زمان کلیک (ثانیه)\n"
             f"▸ `/autocatch times [1-3]` ── تنظیم تعداد کلیک مجدد هنگام ادیت پیام"
         )
-        await ev.edit(msg)
+        await safe_edit_or_silent(ev, msg)
         return
         
     sub = toks[1].strip().lower()
@@ -52,32 +61,32 @@ async def autocatch_command(ev):
         cfg["status"] = True
         all_cfg[cid] = cfg
         set_catch_cfg(me_id, all_cfg)
-        await ev.edit("🐱 **نجات خودکار گربه خیابونی در این چت فعال شد!** 🟢")
+        await safe_edit_or_silent(ev, "🐱 **نجات خودکار گربه خیابونی در این چت فعال شد!** 🟢")
     elif sub == "off":
         cfg["status"] = False
         all_cfg[cid] = cfg
         set_catch_cfg(me_id, all_cfg)
-        await ev.edit("🐱 **نجات خودکار گربه خیابونی در این چت غیرفعال شد.** 🔴")
+        await safe_edit_or_silent(ev, "🐱 **نجات خودکار گربه خیابونی در این چت غیرفعال شد.** 🔴")
     elif sub == "delay":
         if len(toks) >= 3 and toks[2].isdigit():
             val = max(0, min(10, int(toks[2])))
             cfg["delay"] = val
             all_cfg[cid] = cfg
             set_catch_cfg(me_id, all_cfg)
-            await ev.edit(f"⏱️ **تاخیر کلیک روی `{val}` ثانیه تنظیم شد.**")
+            await safe_edit_or_silent(ev, f"⏱️ **تاخیر کلیک روی `{val}` ثانیه تنظیم شد.**")
         else:
-            await ev.edit("⚠️ **لطفا یک عدد بین ۰ تا ۱۰ وارد کنید.** (مثال: `/autocatch delay 2`)")
+            await safe_edit_or_silent(ev, "⚠️ **لطفا یک عدد بین ۰ تا ۱۰ وارد کنید.** (مثال: `/autocatch delay 2`)")
     elif sub == "times":
         if len(toks) >= 3 and toks[2].isdigit():
             val = max(1, min(3, int(toks[2])))
             cfg["times"] = val
             all_cfg[cid] = cfg
             set_catch_cfg(me_id, all_cfg)
-            await ev.edit(f"🔢 **تعداد کلیک مجدد هنگام ادیت روی `{val}` بار تنظیم شد.**")
+            await safe_edit_or_silent(ev, f"🔢 **تعداد کلیک مجدد هنگام ادیت روی `{val}` بار تنظیم شد.**")
         else:
-            await ev.edit("⚠️ **لطفا یک عدد بین ۱ تا ۳ وارد کنید.** (مثال: `/autocatch times 2`)")
+            await safe_edit_or_silent(ev, "⚠️ **لطفا یک عدد بین ۱ تا ۳ وارد کنید.** (مثال: `/autocatch times 2`)")
     else:
-        await ev.edit("⚠️ **دستور نامعتبر. از `on`, `off`, `delay` یا `times` استفاده کنید.**")
+        await safe_edit_or_silent(ev, "⚠️ **دستور نامعتبر. از `on`, `off`, `delay` یا `times` استفاده کنید.**")
 
 async def handle_autocatch_trigger(ev, is_edit: bool = False):
     if ev.out:
@@ -116,8 +125,12 @@ async def handle_autocatch_trigger(ev, is_edit: bool = False):
     if not chat_cfg or not chat_cfg.get("status"):
         return
 
-    k = (cid, msg.id)
-    clicks = _click_db.get(k, 0)
+    now = time.time()
+    _prune_click_db(now)
+
+    k = (me_id, cid, msg.id)
+    entry = _click_db.get(k)
+    clicks = entry[0] if entry else 0
     max_tries = chat_cfg.get("times", 1)
 
     if clicks >= max_tries:
@@ -131,7 +144,7 @@ async def handle_autocatch_trigger(ev, is_edit: bool = False):
         await asyncio.sleep(d)
 
     try:
-        _click_db[k] = clicks + 1
+        _click_db[k] = (clicks + 1, now)
         if btn_pos:
             await ev.click(btn_pos[0], btn_pos[1])
         else:
@@ -151,6 +164,6 @@ async def handle_autocatch_trigger(ev, is_edit: bool = False):
     except MessageIdInvalidError:
         pass
     except RPCError as rpc:
-        print(f"[!] autocatch click error in {cid}: {rpc}")
+        print(f"[!] autocatch click error (user {me_id}) in {cid}: {rpc}")
     except Exception:
         pass
