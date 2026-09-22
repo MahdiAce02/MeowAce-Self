@@ -25,15 +25,17 @@ fi
 
 do_multisession_config() {
     echo -e "${CYAN}${BOLD}🤖 Multi-Session & Bot Configuration${NC}"
-    read -p "▸ Bot Token: " bot_token
+    read -p "▸ Bot Token (from @BotFather): " bot_token
     read -p "▸ Admin Telegram User ID: " admin_id
-    read -p "▸ Bot API ID: " bot_api_id
-    read -p "▸ Bot API HASH: " bot_api_hash
+    read -p "▸ Bot API ID [Press Enter for default Telegram API: 2834]: " bot_api_id
+    bot_api_id=${bot_api_id:-2834}
+    read -p "▸ Bot API HASH [Press Enter for default Telegram API]: " bot_api_hash
+    bot_api_hash=${bot_api_hash:-"68875f756c9b437a8b916ca3de215815"}
     read -p "▸ Card Number for Payments (default: 6037997000000000): " card_num
     card_num=${card_num:-"6037997000000000"}
 
-    if [ -z "$bot_token" ] || [ -z "$admin_id" ] || [ -z "$bot_api_id" ] || [ -z "$bot_api_hash" ]; then
-        echo -e "${RED}❌ Bot token, Admin ID, and API credentials cannot be empty!${NC}"
+    if [ -z "$bot_token" ] || [ -z "$admin_id" ]; then
+        echo -e "${RED}❌ Bot token and Admin ID cannot be empty!${NC}"
         return 1
     fi
 
@@ -57,17 +59,41 @@ do_multisession_config() {
 }
 EOF
     echo -e "${GREEN}✅ bot_config.json created successfully.${NC}"
+
+    # Always ensure multi_session: true is set in config.json
+    if [ ! -f "config.json" ]; then
+        echo "{\"multi_session\": true}" > config.json
+    else
+        $PY -c '
+import json
+try:
+    with open("config.json", "r", encoding="utf-8") as f:
+        d = json.load(f)
+except Exception:
+    d = {}
+d["multi_session"] = True
+with open("config.json", "w", encoding="utf-8") as f:
+    json.dump(d, f, indent=2, ensure_ascii=False)
+' 2>/dev/null || echo "{\"multi_session\": true}" > config.json
+    fi
+    echo -e "${GREEN}✅ Multi-session mode enabled in config.json.${NC}"
+
+    if systemctl is_active --quiet meowace-self 2>/dev/null; then
+        echo -e "${YELLOW}🔄 Restarting meowace-self service to apply changes...${NC}"
+        sudo systemctl restart meowace-self
+    fi
 }
 
 do_install() {
     echo -e "${CYAN}${BOLD}🚀 Setting up MeowAce-Self...${NC}"
     
     echo -e "\nSelect Mode:"
-    echo -e "  [1] Single-Session (Single account login via config.json)"
-    echo -e "  [2] Multi-Session (Multi-account login managed by Telegram Bot)"
+    echo -e "  [1] Multi-Session (Multi-account bot manager) [RECOMMENDED]"
+    echo -e "  [2] Single-Session (Single account login via config.json)"
     read -p "Choice [1-2] (default: 1): " mode_choice
+    mode_choice=${mode_choice:-"1"}
 
-    if [ "$mode_choice" == "2" ]; then
+    if [ "$mode_choice" == "1" ]; then
         echo "{\"multi_session\": true}" > config.json
         do_multisession_config
     else
@@ -96,7 +122,7 @@ do_install() {
     venv/bin/pip install -q -r requirements.txt
     PY="venv/bin/python"
 
-    if [ "$mode_choice" != "2" ]; then
+    if [ "$mode_choice" == "2" ]; then
         # Interactive Telethon Login for Single Session
         $PY login.py
         if [ $? -ne 0 ]; then

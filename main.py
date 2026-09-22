@@ -21,17 +21,40 @@ CONFIG_FILE = "config.json"
 EXAMPLE_CONFIG_FILE = "config.example.json"
 
 def read_config():
+    # If bot_config.json exists with a valid bot_token, auto-enable multi_session
+    if os.path.exists("bot_config.json"):
+        try:
+            with open("bot_config.json", 'r', encoding='utf-8') as bf:
+                b_cfg = json.load(bf)
+                token = b_cfg.get("bot_token")
+                if token and token != "YOUR_BOT_TOKEN" and token != "YOUR_BOT_TOKEN_HERE":
+                    cfg = {}
+                    if os.path.exists(CONFIG_FILE):
+                        try:
+                            with open(CONFIG_FILE, 'r', encoding='utf-8') as cf:
+                                cfg = json.load(cf)
+                        except Exception:
+                            pass
+                    if not cfg.get("multi_session"):
+                        cfg["multi_session"] = True
+                        try:
+                            with open(CONFIG_FILE, 'w', encoding='utf-8') as cf:
+                                json.dump(cfg, cf, indent=2, ensure_ascii=False)
+                        except Exception:
+                            pass
+                    return cfg
+        except Exception:
+            pass
+
     if not os.path.exists(CONFIG_FILE):
         if os.path.exists(EXAMPLE_CONFIG_FILE):
             with open(EXAMPLE_CONFIG_FILE, 'r', encoding='utf-8') as s_file:
                 c_data = s_file.read()
             with open(CONFIG_FILE, 'w', encoding='utf-8') as d_file:
                 d_file.write(c_data)
-            print(f"[!] '{CONFIG_FILE}' was missing. Created from template. Please set api_id and api_hash.")
-            sys.exit(1)
         else:
-            print(f"[!] Error: Config template '{EXAMPLE_CONFIG_FILE}' missing.")
-            sys.exit(1)
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as d_file:
+                d_file.write('{"multi_session": false}')
 
     try:
         with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
