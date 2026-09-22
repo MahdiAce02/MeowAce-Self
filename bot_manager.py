@@ -35,16 +35,20 @@ TELEGRAM_PRESETS = {
     "macos": {
         "title": "⚡ ورود سریع (Telegram macOS - رسمی اپل)",
         "api_id": 2834,
-        "api_hash": "68875097250b2a159d2d6685d45b0f26",
+        "api_hash": "68875f756c9b437a8b916ca3de215815",
         "device_model": "MacBook Pro",
-        "system_version": "macOS 14.5",
-        "app_version": "10.14"
+        "system_version": "macOS 14.4.1",
+        "app_version": "10.11",
+        "lang_code": "en",
+        "system_lang_code": "en"
     },
     "server": {
         "title": "🤖 ورود با API پیش‌فرض سرور",
         "device_model": "PC 64bit",
         "system_version": "Windows 11",
-        "app_version": "5.4.1"
+        "app_version": "5.4.1",
+        "lang_code": "en",
+        "system_lang_code": "en"
     }
 }
 
@@ -82,6 +86,8 @@ async def process_otp_sign_in(ev, user_id: int, otp_code: str, state: dict, main
     device_model = state.get("device_model", "PC 64bit")
     system_version = state.get("system_version", "Windows 11")
     app_version = state.get("app_version", "5.4.1")
+    lang_code = state.get("lang_code", "en")
+    system_lang_code = state.get("system_lang_code", "en")
 
     bot_cfg = load_bot_config()
     bot_dt = load_bot_data()
@@ -101,6 +107,8 @@ async def process_otp_sign_in(ev, user_id: int, otp_code: str, state: dict, main
         if device_model: bot_dt["users"][uid_str]["device_model"] = device_model
         if system_version: bot_dt["users"][uid_str]["system_version"] = system_version
         if app_version: bot_dt["users"][uid_str]["app_version"] = app_version
+        if lang_code: bot_dt["users"][uid_str]["lang_code"] = lang_code
+        if system_lang_code: bot_dt["users"][uid_str]["system_lang_code"] = system_lang_code
         save_bot_data(bot_dt)
 
         proxy_kw = get_proxy_kwargs(main_config)
@@ -108,7 +116,9 @@ async def process_otp_sign_in(ev, user_id: int, otp_code: str, state: dict, main
             user_id, api_id, api_hash, proxy_kw,
             device_model=device_model,
             system_version=system_version,
-            app_version=app_version
+            app_version=app_version,
+            lang_code=lang_code,
+            system_lang_code=system_lang_code
         )
         user_login_states.pop(user_id, None)
         buttons = get_main_menu_buttons(user_id, bot_cfg, bot_dt)
@@ -663,7 +673,9 @@ async def start_bot_manager(main_config: dict):
                 "api_hash": preset["api_hash"],
                 "device_model": preset["device_model"],
                 "system_version": preset["system_version"],
-                "app_version": preset["app_version"]
+                "app_version": preset["app_version"],
+                "lang_code": preset.get("lang_code", "en"),
+                "system_lang_code": preset.get("system_lang_code", "en")
             }
             cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
             await ev.edit(
@@ -688,7 +700,9 @@ async def start_bot_manager(main_config: dict):
                 "api_hash": s_api_hash,
                 "device_model": preset["device_model"],
                 "system_version": preset["system_version"],
-                "app_version": preset["app_version"]
+                "app_version": preset["app_version"],
+                "lang_code": preset.get("lang_code", "en"),
+                "system_lang_code": preset.get("system_lang_code", "en")
             }
             cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
             await ev.edit(
@@ -720,9 +734,11 @@ async def start_bot_manager(main_config: dict):
                 "step": "ENTER_PHONE",
                 "api_id": api_id,
                 "api_hash": api_hash,
-                "device_model": u_info.get("device_model", "PC 64bit"),
-                "system_version": u_info.get("system_version", "Windows 11"),
-                "app_version": u_info.get("app_version", "5.4.1")
+                "device_model": u_info.get("device_model", "MacBook Pro"),
+                "system_version": u_info.get("system_version", "macOS 14.4.1"),
+                "app_version": u_info.get("app_version", "10.11"),
+                "lang_code": u_info.get("lang_code", "en"),
+                "system_lang_code": u_info.get("system_lang_code", "en")
             }
             cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
             await ev.edit("📱 لطفاً **شماره تلفن** حساب تلگرام خود را با کد کشور وارد کنید (مثال: `+989123456789`):", buttons=cancel_btn)
@@ -1039,9 +1055,11 @@ async def start_bot_manager(main_config: dict):
                 state["phone"] = phone
                 api_id = state["api_id"]
                 api_hash = state["api_hash"]
-                device_model = state.get("device_model", "PC 64bit")
-                system_version = state.get("system_version", "Windows 11")
-                app_version = state.get("app_version", "5.4.1")
+                device_model = state.get("device_model", "MacBook Pro")
+                system_version = state.get("system_version", "macOS 14.4.1")
+                app_version = state.get("app_version", "10.11")
+                lang_code = state.get("lang_code", "en")
+                system_lang_code = state.get("system_lang_code", "en")
 
                 await ev.respond("⚡ در حال اتصال به سرور تلگرام و ارسال کد تایید...")
                 sess_file = get_session_filepath(user_id)
@@ -1057,6 +1075,8 @@ async def start_bot_manager(main_config: dict):
                     device_model=device_model,
                     system_version=system_version,
                     app_version=app_version,
+                    lang_code=lang_code,
+                    system_lang_code=system_lang_code,
                     **proxy_kw
                 )
                 try:
@@ -1112,9 +1132,11 @@ async def start_bot_manager(main_config: dict):
                 phone = state.get("phone", "")
                 api_id = state["api_id"]
                 api_hash = state["api_hash"]
-                device_model = state.get("device_model", "PC 64bit")
-                system_version = state.get("system_version", "Windows 11")
-                app_version = state.get("app_version", "5.4.1")
+                device_model = state.get("device_model", "MacBook Pro")
+                system_version = state.get("system_version", "macOS 14.4.1")
+                app_version = state.get("app_version", "10.11")
+                lang_code = state.get("lang_code", "en")
+                system_lang_code = state.get("system_lang_code", "en")
 
                 try:
                     await temp_client.sign_in(password=password)
@@ -1131,6 +1153,8 @@ async def start_bot_manager(main_config: dict):
                     if device_model: bot_dt["users"][uid_str]["device_model"] = device_model
                     if system_version: bot_dt["users"][uid_str]["system_version"] = system_version
                     if app_version: bot_dt["users"][uid_str]["app_version"] = app_version
+                    if lang_code: bot_dt["users"][uid_str]["lang_code"] = lang_code
+                    if system_lang_code: bot_dt["users"][uid_str]["system_lang_code"] = system_lang_code
                     save_bot_data(bot_dt)
 
                     proxy_kw = get_proxy_kwargs(main_config)
@@ -1138,7 +1162,9 @@ async def start_bot_manager(main_config: dict):
                         user_id, api_id, api_hash, proxy_kw,
                         device_model=device_model,
                         system_version=system_version,
-                        app_version=app_version
+                        app_version=app_version,
+                        lang_code=lang_code,
+                        system_lang_code=system_lang_code
                     )
                     user_login_states.pop(user_id, None)
                     buttons = get_main_menu_buttons(user_id, bot_cfg, bot_dt)

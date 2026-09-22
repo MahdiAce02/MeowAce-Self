@@ -259,7 +259,9 @@ async def start_user_client(
     proxy_kwargs: Optional[dict] = None,
     device_model: Optional[str] = None,
     system_version: Optional[str] = None,
-    app_version: Optional[str] = None
+    app_version: Optional[str] = None,
+    lang_code: Optional[str] = "en",
+    system_lang_code: Optional[str] = "en"
 ) -> Tuple[bool, str]:
     """
     Connect and start a dedicated Telethon client for user_id.
@@ -282,6 +284,10 @@ async def start_user_client(
         client_kwargs["system_version"] = system_version
     if app_version:
         client_kwargs["app_version"] = app_version
+    if lang_code:
+        client_kwargs["lang_code"] = lang_code
+    if system_lang_code:
+        client_kwargs["system_lang_code"] = system_lang_code
 
     user_client = TelegramClient(session_file_prefix, api_id, api_hash, **client_kwargs)
 
@@ -384,7 +390,9 @@ async def resume_all_sessions(main_config: dict) -> None:
                     proxy_options,
                     device_model=user_record.get("device_model"),
                     system_version=user_record.get("system_version"),
-                    app_version=user_record.get("app_version")
+                    app_version=user_record.get("app_version"),
+                    lang_code=user_record.get("lang_code", "en"),
+                    system_lang_code=user_record.get("system_lang_code", "en")
                 )
                 if is_ok:
                     successful_resumes += 1
