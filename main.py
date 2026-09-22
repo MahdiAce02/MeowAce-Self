@@ -13,6 +13,7 @@ from modules.autofridge import autofridge_command, resume_autofridge_tasks, get_
 from modules.show import show_command, get_show_mode
 from modules.sched import sched_command
 from modules.alias import alias_command, resolve_alias
+from modules.proxy import get_proxy_kwargs
 
 # configuration filenames
 CONFIG_FILE = "config.json"
@@ -109,8 +110,15 @@ async def main():
     api_hash = conf["api_hash"]
     
     print("[+] Connecting Telethon client...")
-    client = TelegramClient("meowace_self", api_id, api_hash)
-    await client.start()
+    proxy_kwargs = get_proxy_kwargs(conf)
+    client = TelegramClient("meowace_self", api_id, api_hash, **proxy_kwargs)
+    try:
+        await client.start()
+    except Exception as e:
+        print(f"[!] Error starting Telethon client: {e}")
+        if proxy_kwargs:
+            print("[!] Note: Proxy is enabled. If connection fails or times out, please verify your proxy settings.")
+        sys.exit(1)
     
     me = await client.get_me()
     client.uid = me.id

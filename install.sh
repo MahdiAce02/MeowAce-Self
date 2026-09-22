@@ -214,8 +214,16 @@ do_proxy_config() {
         echo -e "${RED}❌ config.json not found! Please run installation first.${NC}"
         return
     fi
-    $PY -c '
+    PY_CMD="python3"
+    if [ -d "venv" ]; then
+        PY_CMD="venv/bin/python"
+    fi
+    $PY_CMD -c '
 import json, sys
+try:
+    from modules.proxy import parse_proxy_link
+except ImportError:
+    parse_proxy_link = None
 
 cfg_file = "config.json"
 try:
@@ -229,64 +237,94 @@ proxy = cfg.get("proxy", {})
 current_st = "Enabled 🟢" if proxy.get("enabled") else "Disabled 🔴"
 print(f"Current Proxy Status: {current_st}")
 if proxy.get("enabled"):
-    print(f"  ▸ Type: {proxy.get(\"type\", \"socks5\")}")
+    print(f"  ▸ Type: {proxy.get(\"type\", \"socks5\").upper()}")
     print(f"  ▸ Host: {proxy.get(\"host\", \"127.0.0.1\")}:{proxy.get(\"port\", 1080)}")
+    if proxy.get("type") == "mtproto" and proxy.get("secret"):
+        sec = str(proxy.get("secret"))
+        sec_abbr = sec[:6] + "..." + sec[-4:] if len(sec) > 12 else sec
+        print(f"  ▸ Secret: {sec_abbr}")
 
-ans = input("\nDo you want to enable/configure Proxy? [y/N]: ").strip().lower()
-if ans not in ("y", "yes"):
+print("\nProxy Options:")
+print("  [1] 🔗 Quick Setup via Proxy Link (tg://, https://t.me/proxy, socks5://)")
+print("  [2] ⚙️ Manual Configuration (SOCKS5 / HTTP / MTProto)")
+print("  [3] 🔴 Disable Proxy")
+print("  [0] ↩️ Return")
+choice = input("Select option [0-3]: ").strip()
+
+if choice == "3":
     proxy["enabled"] = False
     cfg["proxy"] = proxy
     with open(cfg_file, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
     print("🔴 Proxy disabled and saved to config.json.")
     sys.exit(0)
+elif choice == "1":
+    link = input("\n▸ Paste Proxy Link: ").strip()
+    parsed = parse_proxy_link(link) if parse_proxy_link else {}
+    if not parsed:
+        print("❌ Invalid or unsupported proxy link format.")
+        sys.exit(1)
+    cfg["proxy"] = parsed
+    with open(cfg_file, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    print(f"\n✅ Proxy ({parsed.get(\"type\", \"\").upper()}) saved successfully!")
+    sys.exit(0)
+elif choice == "2":
+    print("\nSelect Proxy Type:")
+    print("  [1] SOCKS5 (Default)")
+    print("  [2] HTTP / HTTPS")
+    print("  [3] MTProto")
+    t_choice = input("Choice [1-3] (default: 1): ").strip()
 
-print("\nSelect Proxy Type:")
-print("  [1] SOCKS5 (Default)")
-print("  [2] HTTP / HTTPS")
-print("  [3] MTProto")
-t_choice = input("Choice [1-3] (default: 1): ").strip()
+    p_type = "socks5"
+    if t_choice == "2":
+        p_type = "http"
+    elif t_choice == "3":
+        p_type = "mtproto"
 
-p_type = "socks5"
-if t_choice == "2":
-    p_type = "http"
-elif t_choice == "3":
-    p_type = "mtproto"
+    host = input("▸ Host IP/Domain [default: 127.0.0.1]: ").strip() or "127.0.0.1"
+    if parse_proxy_link and ("://" in host or host.startswith("tg://")):
+        parsed = parse_proxy_link(host)
+        if parsed:
+            cfg["proxy"] = parsed
+            with open(cfg_file, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2, ensure_ascii=False)
+            print(f"\n✅ Proxy ({parsed.get(\"type\", \"\").upper()}) link detected and saved!")
+            sys.exit(0)
 
-host = input("▸ Host IP/Domain [default: 127.0.0.1]: ").strip() or "127.0.0.1"
-default_port = "443" if p_type == "mtproto" else ("8080" if p_type == "http" else "1080")
-port_str = input(f"▸ Port [default: {default_port}]: ").strip() or default_port
+    default_port = "443" if p_type == "mtproto" else ("8080" if p_type == "http" else "1080")
+    port_str = input(f"▸ Port [default: {default_port}]: ").strip() or default_port
 
-try:
-    port = int(port_str)
-except ValueError:
-    port = int(default_port)
+    try:
+        port = int(port_str)
+    except ValueError:
+        port = int(default_port)
 
-username = ""
-password = ""
-secret = ""
+    username = ""
+    password = ""
+    secret = ""
 
-if p_type in ("socks5", "http"):
-    username = input("▸ Username (leave empty if none): ").strip()
-    password = input("▸ Password (leave empty if none): ").strip()
-elif p_type == "mtproto":
-    secret = input("▸ MTProto Secret (required): ").strip()
+    if p_type in ("socks5", "http"):
+        username = input("▸ Username (leave empty if none): ").strip()
+        password = input("▸ Password (leave empty if none): ").strip()
+    elif p_type == "mtproto":
+        secret = input("▸ MTProto Secret (required): ").strip()
 
-proxy_obj = {
-    "enabled": True,
-    "type": p_type,
-    "host": host,
-    "port": port,
-    "username": username,
-    "password": password,
-    "secret": secret
-}
+    proxy_obj = {
+        "enabled": True,
+        "type": p_type,
+        "host": host,
+        "port": port,
+        "username": username,
+        "password": password,
+        "secret": secret
+    }
 
-cfg["proxy"] = proxy_obj
-with open(cfg_file, "w", encoding="utf-8") as f:
-    json.dump(cfg, f, indent=2, ensure_ascii=False)
+    cfg["proxy"] = proxy_obj
+    with open(cfg_file, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2, ensure_ascii=False)
 
-print(f"\n✅ Proxy ({p_type.upper()}) configured and saved to config.json!")
+    print(f"\n✅ Proxy ({p_type.upper()}) configured and saved to config.json!")
 '
     if systemctl is_active --quiet meowace-self 2>/dev/null; then
         echo -e "${YELLOW}🔄 Restarting meowace-self service to apply changes...${NC}"

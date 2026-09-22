@@ -27,10 +27,17 @@ client = TelegramClient("meowace_self", app_id, app_hash, **proxy_kwargs)
 
 async def auth():
     print("⚡ Connecting to Telegram...")
-    await client.start()
-    me = await client.get_me()
-    print(f"\n🎉 Authenticated successfully as {me.first_name} (@{me.username or 'N/A'}) [ID: {me.id}]")
-    await client.disconnect()
+    try:
+        await client.start()
+        me = await client.get_me()
+        print(f"\n🎉 Authenticated successfully as {me.first_name} (@{me.username or 'N/A'}) [ID: {me.id}]")
+    except Exception as err:
+        print(f"\n❌ Login / Connection error: {err}")
+        if proxy_kwargs:
+            print("💡 Proxy is enabled. If you cannot connect, check your proxy settings or disable it in meowace.")
+        raise
+    finally:
+        await client.disconnect()
 
 if __name__ == "__main__":
     asyncio.run(auth())
