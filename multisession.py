@@ -3,6 +3,7 @@ multisession.py - Multi-User Session & Lifetime Management for MeowAce-Self
 Author: MahdiAce02
 """
 
+import os
 import sys
 import json
 import time
