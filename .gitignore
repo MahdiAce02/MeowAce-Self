@@ -11,3 +11,4 @@ bot_config.json
 bot_data.json
 settings/
 sessions/
+.codebase-memory/
