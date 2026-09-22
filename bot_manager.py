@@ -343,7 +343,7 @@ async def start_bot_manager(main_config: dict):
         )
         await ev.respond(help_text)
 
-    @bot.on(events.NewMessage(pattern=r'^/(?:info|id)(?:\s+(.+))?'))
+    @bot.on(events.NewMessage(pattern=r'^/(?:info|id)($|\s+.*)'))
     async def _info_cmd(ev):
         user_id = ev.sender_id
         bot_cfg = load_bot_config()

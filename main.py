@@ -196,7 +196,7 @@ async def main():
     async def _alias_h(ev):
         await alias_command(ev)
 
-    @client.on(events.NewMessage(pattern=r'(?i)^[/.=!]?(?:info|id)(?:\s+(.+))?$'))
+    @client.on(events.NewMessage(pattern=r'(?i)^[/.=!]?(?:info|id)($|\s+.*)'))
     async def _info_h(ev):
         await info_command(ev)
 

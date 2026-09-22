@@ -215,7 +215,7 @@ def attach_selfbot_handlers(client: TelegramClient, user_id: int) -> None:
     async def _alias_handler(event):
         await alias_command(event)
 
-    @client.on(events.NewMessage(pattern=r'(?i)^[/.=!]?(?:info|id)(?:\s+(.+))?$'))
+    @client.on(events.NewMessage(pattern=r'(?i)^[/.=!]?(?:info|id)($|\s+.*)'))
     async def _info_handler(event):
         await info_command(event)
 

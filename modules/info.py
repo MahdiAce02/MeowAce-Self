@@ -174,20 +174,21 @@ async def info_command(ev):
         except Exception:
             pass
 
-    # In selfbot, only execute on outgoing or if sender is the selfbot account
-    if ev.sender_id != me_id:
+    # In selfbot, execute if message is outgoing or if sender matches client user ID
+    is_outgoing = getattr(ev, 'out', False)
+    if not is_outgoing and ev.sender_id != me_id:
         return
 
     text = ev.raw_text or ""
     parts = text.split(maxsplit=1)
-    target_arg = parts[1].strip() if len(parts) > 1 else None
+    target_arg = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
 
     # Indicate processing if needed
     try:
         info_txt, ent, fwd_ent = await get_info_text_and_entity(client, ev, target_arg)
-        await ev.edit(info_txt)
+        await ev.edit(info_txt, link_preview=False)
     except Exception as e:
         try:
-            await ev.edit(f"❌ خطا در استعلام اطلاعات: {e}")
+            await ev.edit(f"❌ خطا در استعلام اطلاعات: {e}", link_preview=False)
         except Exception:
-            await ev.respond(f"❌ خطا در استعلام اطلاعات: {e}")
+            await ev.respond(f"❌ خطا در استعلام اطلاعات: {e}", link_preview=False)
