@@ -184,7 +184,9 @@ do_update() {
     git config --global --add safe.directory "$DIR" 2>/dev/null
 
     if [ -d ".git" ]; then
-        git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || git pull
+        git fetch origin main 2>/dev/null
+        git checkout -- . 2>/dev/null
+        git reset --hard origin/main 2>/dev/null || git pull origin main 2>/dev/null || git pull
         if [ $? -ne 0 ]; then
             echo -e "${RED}⚠️ Git pull failed. Checking status...${NC}"
         else
