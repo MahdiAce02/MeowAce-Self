@@ -136,10 +136,7 @@ def can_user_access(user_id: int, bot_config: dict, bot_data: dict) -> bool:
     if current_mode == "private":
         # In private mode, user must be in whitelist
         whitelisted_ids = [str(item) for item in bot_data.get("whitelist", [])]
-        if user_key not in whitelisted_ids:
-            return False
-        # Whitelisted users get access if subscription active or set to permanent (-1)
-        return expiration_timestamp > time.time() or expiration_timestamp == -1
+        return user_key in whitelisted_ids
 
     elif current_mode == "public":
         public_sub_type = bot_config.get("public_type", "free")

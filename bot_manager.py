@@ -637,8 +637,11 @@ async def start_bot_manager(main_config: dict):
                     target_uid = int(text)
                     if target_uid not in bot_dt["whitelist"]:
                         bot_dt["whitelist"].append(target_uid)
-                        save_bot_data(bot_dt)
-                    await ev.respond(f"✅ کاربر `{target_uid}` به وایت‌لیست اضافه شد.")
+                    uid_str = str(target_uid)
+                    bot_dt["users"].setdefault(uid_str, {})
+                    bot_dt["users"][uid_str]["subscription_expire"] = -1
+                    save_bot_data(bot_dt)
+                    await ev.respond(f"✅ کاربر `{target_uid}` با موفقیت به وایت‌لیست اضافه شد (دسترسی دائم فعال شد).")
                 except Exception:
                     await ev.respond("❌ آیدی وارد شده معتبر نیست.")
             elif action == "admin_rem_wl":
@@ -646,7 +649,10 @@ async def start_bot_manager(main_config: dict):
                     target_uid = int(text)
                     if target_uid in bot_dt["whitelist"]:
                         bot_dt["whitelist"].remove(target_uid)
-                        save_bot_data(bot_dt)
+                    uid_str = str(target_uid)
+                    if uid_str in bot_dt["users"] and bot_dt["users"][uid_str].get("subscription_expire") == -1:
+                        bot_dt["users"][uid_str]["subscription_expire"] = 0
+                    save_bot_data(bot_dt)
                     await ev.respond(f"✅ کاربر `{target_uid}` از وایت‌لیست حذف شد.")
                 except Exception:
                     await ev.respond("❌ آیدی وارد شده معتبر نیست.")
