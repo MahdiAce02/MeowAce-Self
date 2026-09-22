@@ -177,41 +177,142 @@ do_relogin() {
 }
 
 do_update() {
-    echo -e "${CYAN}🔄 Fetching latest source code from GitHub...${NC}"
-    sudo systemctl stop meowace-self 2>/dev/null
-    pkill -f "$DIR/main.py" 2>/dev/null
+    cat << 'WORKER_EOF' > /tmp/meowace_updater.sh
+#!/bin/bash
+DIR="$1"
+cd "$DIR" || exit 1
 
-    git config --global --add safe.directory "$DIR" 2>/dev/null
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
 
-    if [ -d ".git" ]; then
-        git fetch origin main 2>/dev/null
-        git checkout -- . 2>/dev/null
-        git reset --hard origin/main 2>/dev/null || git pull origin main 2>/dev/null || git pull
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}⚠️ Git pull failed. Checking status...${NC}"
-        else
-            echo -e "${GREEN}📥 Source code updated successfully.${NC}"
-        fi
-    else
-        echo -e "${RED}❌ .git repository not found! Cannot pull updates.${NC}"
-    fi
+echo -e "\n${CYAN}${BOLD}🔄 Starting MeowAce-Self Safe Updater...${NC}"
 
-    # Clear bytecode cache
-    find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null
-    find . -type f -name "*.pyc" -delete 2>/dev/null
+# 1. Stop service & any stray processes
+echo -e "${YELLOW}🛑 Stopping bot service...${NC}"
+sudo systemctl stop meowace-self 2>/dev/null
+pkill -f "$DIR/main.py" 2>/dev/null
 
-    if [ -d "venv" ]; then
-        echo -e "${CYAN}📦 Updating Python dependencies...${NC}"
-        venv/bin/pip install -q --upgrade pip 2>/dev/null
-        venv/bin/pip install -q -r requirements.txt
-    fi
+# 2. Configure safe directory
+git config --global --add safe.directory "$DIR" 2>/dev/null
 
-    sudo systemctl daemon-reload
-    sudo systemctl restart meowace-self
-    echo -e "${GREEN}✅ Update finished & service restarted! (Session preserved)${NC}"
-    
-    # خروج تمیز برای جلوگیری از خطای بافر در Bash
-    exit 0
+if [ ! -d ".git" ]; then
+    echo -e "${RED}❌ .git directory not found in $DIR! Cannot pull updates.${NC}"
+    sudo systemctl restart meowace-self 2>/dev/null
+    exit 1
+fi
+
+# 3. Ensure remote origin exists
+REMOTE_URL=$(git remote get-url origin 2>/dev/null)
+if [ -z "$REMOTE_URL" ]; then
+    git remote add origin "https://github.com/MahdiAce02/MeowAce-Self.git" 2>/dev/null
+fi
+
+# 4. Abort any broken git merge/rebase
+git rebase --abort 2>/dev/null
+git merge --abort 2>/dev/null
+
+# 5. Backup critical configs in /tmp
+echo -e "${CYAN}💾 Securing configs and session files...${NC}"
+mkdir -p /tmp/meowace_backup
+[ -f "config.json" ] && cp -f "config.json" /tmp/meowace_backup/ 2>/dev/null
+[ -f "bot_config.json" ] && cp -f "bot_config.json" /tmp/meowace_backup/ 2>/dev/null
+[ -f "bot_data.json" ] && cp -f "bot_data.json" /tmp/meowace_backup/ 2>/dev/null
+
+# 6. Fetch remote updates
+echo -e "${CYAN}📥 Pulling latest source code from GitHub...${NC}"
+git fetch origin main 2>/dev/null || git fetch origin master 2>/dev/null || git fetch --all 2>/dev/null
+
+TARGET_BRANCH="main"
+if git show-ref --verify --quiet refs/remotes/origin/main; then
+    TARGET_BRANCH="main"
+elif git show-ref --verify --quiet refs/remotes/origin/master; then
+    TARGET_BRANCH="master"
+fi
+
+# Discard all local modifications to tracked files
+git reset --hard "origin/$TARGET_BRANCH" 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo -e "${YELLOW}⚠️ Direct reset failed, attempting forced checkout recovery...${NC}"
+    git checkout -B "$TARGET_BRANCH" "origin/$TARGET_BRANCH" --force 2>/dev/null
+    git reset --hard "origin/$TARGET_BRANCH" 2>/dev/null
+fi
+
+# Restore configs if needed
+[ -f "/tmp/meowace_backup/config.json" ] && [ ! -f "config.json" ] && cp -f "/tmp/meowace_backup/config.json" ./
+[ -f "/tmp/meowace_backup/bot_config.json" ] && [ ! -f "bot_config.json" ] && cp -f "/tmp/meowace_backup/bot_config.json" ./
+[ -f "/tmp/meowace_backup/bot_data.json" ] && [ ! -f "bot_data.json" ] && cp -f "/tmp/meowace_backup/bot_data.json" ./
+rm -rf /tmp/meowace_backup
+
+# 7. Clear old python caches
+find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null
+find . -type f -name "*.pyc" -delete 2>/dev/null
+
+# 8. Update dependencies
+if [ -d "venv" ]; then
+    echo -e "${CYAN}📦 Updating Python dependencies in virtualenv...${NC}"
+    venv/bin/pip install -q --upgrade pip 2>/dev/null
+    venv/bin/pip install -q -r requirements.txt
+else
+    echo -e "${CYAN}📦 Creating virtualenv and installing dependencies...${NC}"
+    python3 -m venv venv
+    venv/bin/pip install -q -r requirements.txt
+fi
+
+# 9. Ensure systemd service configuration
+USER_NAME=$(whoami)
+cat <<SVC_EOF | sudo tee /etc/systemd/system/meowace-self.service > /dev/null
+[Unit]
+Description=MeowAce-Self Bot Service
+After=network.target
+
+[Service]
+Type=simple
+User=$USER_NAME
+WorkingDirectory=$DIR
+ExecStart=$DIR/venv/bin/python -u $DIR/main.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+SVC_EOF
+
+sudo systemctl daemon-reload
+sudo systemctl restart meowace-self
+
+# 10. Ensure executable permissions
+chmod +x install.sh setup.sh 2>/dev/null
+
+# 11. Update global shortcut
+cat <<SH_EOF | sudo tee /usr/local/bin/meowace > /dev/null
+#!/bin/bash
+cd "$DIR" || exit 1
+exec bash install.sh "\$@"
+SH_EOF
+sudo chmod +x /usr/local/bin/meowace 2>/dev/null
+
+sleep 1
+if systemctl is-active --quiet meowace-self 2>/dev/null; then
+    echo -e "\n${GREEN}${BOLD}═════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}${BOLD}✅ Update successfully completed & service restarted!${NC}"
+    echo -e "${GREEN}${BOLD}═════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}📌 All sessions, settings, and databases preserved.${NC}"
+    echo -e "${CYAN}💡 View real-time logs anytime with: ${BOLD}journalctl -u meowace-self -f${NC}\n"
+else
+    echo -e "\n${YELLOW}⚠️ Service restarted, checking status:${NC}"
+    sudo systemctl status meowace-self --no-pager
+fi
+
+rm -f /tmp/meowace_updater.sh
+exit 0
+WORKER_EOF
+
+    chmod +x /tmp/meowace_updater.sh
+    exec bash /tmp/meowace_updater.sh "$DIR"
 }
 
 do_uninstall() {

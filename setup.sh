@@ -29,7 +29,12 @@ if [ ! -d "$INSTALL_DIR" ]; then
     fi
 else
     echo -e "${CYAN}🔄 Updating local repository in $INSTALL_DIR...${NC}"
-    cd "$INSTALL_DIR" && git pull origin main 2>/dev/null
+    cd "$INSTALL_DIR" || exit 1
+    git config --global --add safe.directory "$INSTALL_DIR" 2>/dev/null
+    git rebase --abort 2>/dev/null
+    git merge --abort 2>/dev/null
+    git fetch origin main 2>/dev/null || git fetch --all 2>/dev/null
+    git reset --hard origin/main 2>/dev/null || git reset --hard origin/master 2>/dev/null
 fi
 
 # Create global 'meowace' command
