@@ -256,7 +256,10 @@ async def start_user_client(
     user_id: int,
     api_id: int,
     api_hash: str,
-    proxy_kwargs: Optional[dict] = None
+    proxy_kwargs: Optional[dict] = None,
+    device_model: Optional[str] = None,
+    system_version: Optional[str] = None,
+    app_version: Optional[str] = None
 ) -> Tuple[bool, str]:
     """
     Connect and start a dedicated Telethon client for user_id.
@@ -272,7 +275,15 @@ async def start_user_client(
     session_file_prefix = str(SESSIONS_DIR / f"session_{user_id}")
     proxy_options = proxy_kwargs or {}
 
-    user_client = TelegramClient(session_file_prefix, api_id, api_hash, **proxy_options)
+    client_kwargs = {**proxy_options}
+    if device_model:
+        client_kwargs["device_model"] = device_model
+    if system_version:
+        client_kwargs["system_version"] = system_version
+    if app_version:
+        client_kwargs["app_version"] = app_version
+
+    user_client = TelegramClient(session_file_prefix, api_id, api_hash, **client_kwargs)
 
     try:
         await user_client.connect()
@@ -366,7 +377,15 @@ async def resume_all_sessions(main_config: dict) -> None:
                 continue
 
             if can_user_access(target_user_id, current_bot_config, current_bot_data):
-                is_ok, message = await start_user_client(target_user_id, api_id, api_hash, proxy_options)
+                is_ok, message = await start_user_client(
+                    target_user_id,
+                    api_id,
+                    api_hash,
+                    proxy_options,
+                    device_model=user_record.get("device_model"),
+                    system_version=user_record.get("system_version"),
+                    app_version=user_record.get("app_version")
+                )
                 if is_ok:
                     successful_resumes += 1
                 else:

@@ -31,6 +31,130 @@ user_admin_states = {}
 last_code_request_time = {}
 bot_client_instance = None
 
+TELEGRAM_PRESETS = {
+    "macos": {
+        "title": "⚡ ورود سریع (Telegram macOS - رسمی اپل)",
+        "api_id": 2834,
+        "api_hash": "68875097250b2a159d2d6685d45b0f26",
+        "device_model": "MacBook Pro",
+        "system_version": "macOS 14.5",
+        "app_version": "10.14"
+    },
+    "server": {
+        "title": "🤖 ورود با API پیش‌فرض سرور",
+        "device_model": "PC 64bit",
+        "system_version": "Windows 11",
+        "app_version": "5.4.1"
+    }
+}
+
+def get_otp_numpad_buttons(current_code: str = ""):
+    return [
+        [
+            Button.inline("1", b"numpad_1"),
+            Button.inline("2", b"numpad_2"),
+            Button.inline("3", b"numpad_3")
+        ],
+        [
+            Button.inline("4", b"numpad_4"),
+            Button.inline("5", b"numpad_5"),
+            Button.inline("6", b"numpad_6")
+        ],
+        [
+            Button.inline("7", b"numpad_7"),
+            Button.inline("8", b"numpad_8"),
+            Button.inline("9", b"numpad_9")
+        ],
+        [
+            Button.inline("⌫ پاک کردن", b"numpad_del"),
+            Button.inline("0", b"numpad_0"),
+            Button.inline("✅ تایید و ورود", b"numpad_submit")
+        ],
+        [Button.inline("❌ انصراف", b"cancel_login")]
+    ]
+
+async def process_otp_sign_in(ev, user_id: int, otp_code: str, state: dict, main_config: dict, bot: TelegramClient):
+    temp_client = state.get("temp_client")
+    phone = state.get("phone")
+    phone_code_hash = state.get("phone_code_hash")
+    api_id = state["api_id"]
+    api_hash = state["api_hash"]
+    device_model = state.get("device_model", "PC 64bit")
+    system_version = state.get("system_version", "Windows 11")
+    app_version = state.get("app_version", "5.4.1")
+
+    bot_cfg = load_bot_config()
+    bot_dt = load_bot_data()
+
+    try:
+        await temp_client.sign_in(phone=phone, code=otp_code, phone_code_hash=phone_code_hash)
+        me = await temp_client.get_me()
+        await temp_client.disconnect()
+
+        uid_str = str(user_id)
+        bot_dt["users"].setdefault(uid_str, {})
+        bot_dt["users"][uid_str]["api_id"] = api_id
+        bot_dt["users"][uid_str]["api_hash"] = api_hash
+        bot_dt["users"][uid_str]["phone"] = phone
+        bot_dt["users"][uid_str]["first_name"] = getattr(me, 'first_name', '') or ''
+        bot_dt["users"][uid_str]["username"] = getattr(me, 'username', '') or ''
+        if device_model: bot_dt["users"][uid_str]["device_model"] = device_model
+        if system_version: bot_dt["users"][uid_str]["system_version"] = system_version
+        if app_version: bot_dt["users"][uid_str]["app_version"] = app_version
+        save_bot_data(bot_dt)
+
+        proxy_kw = get_proxy_kwargs(main_config)
+        success, msg = await start_user_client(
+            user_id, api_id, api_hash, proxy_kw,
+            device_model=device_model,
+            system_version=system_version,
+            app_version=app_version
+        )
+        user_login_states.pop(user_id, None)
+        buttons = get_main_menu_buttons(user_id, bot_cfg, bot_dt)
+        if success:
+            await bot.send_message(user_id, f"🎉 **ورود با موفقیت انجام شد!**\n{msg}", buttons=buttons)
+            admin_id = bot_cfg.get("admin_id")
+            if admin_id and str(admin_id) != str(user_id):
+                try:
+                    uname = f"@{me.username}" if getattr(me, 'username', None) else "بدون یوزرنیم"
+                    await bot.send_message(
+                        admin_id,
+                        f"🔔 **ورود سشن جدید کاربر:**\n\n"
+                        f"👤 کاربر: {me.first_name} ({uname})\n"
+                        f"🆔 آیدی: `{user_id}`\n"
+                        f"📱 شماره: `{phone}`\n"
+                        f"⚡ زمان: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+                    )
+                except Exception:
+                    pass
+        else:
+            await bot.send_message(user_id, f"❌ خطا در فعال‌سازی سشن: {msg}", buttons=buttons)
+
+    except SessionPasswordNeededError:
+        state["step"] = "ENTER_2FA"
+        cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
+        await bot.send_message(
+            user_id,
+            "🔐 این حساب دارای **رمز عبور دو مرحله‌ای (2FA)** است.\nلطفاً رمز عبور خود را وارد کنید:\n\n"
+            "🔒 پیام حاوی رمز عبور بلافاصله جهت حفظ امنیت شما حذف خواهد شد.",
+            buttons=cancel_btn
+        )
+    except (PhoneCodeInvalidError, PhoneCodeExpiredError):
+        state["entered_otp"] = ""
+        await bot.send_message(
+            user_id,
+            "❌ کد تایید وارد شده اشتباه یا منقضی شده است.\n"
+            "لطفاً از طریق کیبورد شیشه‌ای زیر یا با ارسال با اعداد فارسی / با فاصله مجدداً وارد نمایید:",
+            buttons=get_otp_numpad_buttons("")
+        )
+    except Exception as e:
+        try: await temp_client.disconnect()
+        except Exception: pass
+        buttons = get_main_menu_buttons(user_id, bot_cfg, bot_dt)
+        await bot.send_message(user_id, f"❌ خطا در ورود: {e}", buttons=buttons)
+        user_login_states.pop(user_id, None)
+
 def get_main_menu_buttons(user_id: int, bot_config: dict, bot_data: dict):
     buttons = []
     
@@ -509,26 +633,81 @@ async def start_bot_manager(main_config: dict):
 
             uid_str = str(user_id)
             u_info = bot_dt["users"].get(uid_str, {})
-            api_id = u_info.get("api_id")
-            api_hash = u_info.get("api_hash")
+            saved_api_id = u_info.get("api_id")
+            saved_api_hash = u_info.get("api_hash")
 
-            if api_id and api_hash:
-                buttons = [
-                    [Button.inline("✅ استفاده از API ID و Hash ذخیره‌شده", b"use_saved_creds")],
-                    [Button.inline("✏️ ورود API ID و Hash جدید", b"enter_new_creds")],
-                    [Button.inline("🔙 لغو", b"btn_main_menu")]
-                ]
-                await ev.edit(
-                    f"🔑 **اطلاعات API شما قبلاً ذخیره شده است:**\n\n"
-                    f"• **API ID:** `{api_id}`\n"
-                    f"• **API Hash:** `{api_hash[:4]}...`\n\n"
-                    f"آیا می‌خواهید با همین اطلاعات وارد شوید؟",
-                    buttons=buttons
-                )
-            else:
-                user_login_states[user_id] = {"step": "ENTER_API_ID"}
-                cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
-                await ev.edit("🔑 لطفاً **API ID** حساب تلگرام خود را وارد کنید (مثال: `1234567`):\n\n(جهت لغو، دستور `/cancel` یا دکمه زیر را لمس کنید)", buttons=cancel_btn)
+            login_buttons = [
+                [Button.inline("⚡ ورود سریع (Telegram macOS - بدون نیاز به API)", b"login_preset_macos")],
+                [Button.inline("🤖 ورود با API پیش‌فرض سرور", b"login_preset_server")],
+                [Button.inline("🔑 ورود با API ID و Hash اختصاصی", b"login_custom_creds")]
+            ]
+            if saved_api_id and saved_api_hash:
+                login_buttons.insert(0, [Button.inline("✅ ورود با اطلاعات API قبلی", b"use_saved_creds")])
+            login_buttons.append([Button.inline("🔙 بازگشت به منوی اصلی", b"btn_main_menu")])
+
+            menu_text = (
+                "🔐 **انتخاب روش ورود به سلف‌بات:**\n\n"
+                "جهت فعال‌سازی ربات روی اکانت خود، یکی از روش‌های زیر را انتخاب کنید:\n\n"
+                "• **⚡ ورود سریع (Telegram macOS):** بدون نیاز به ساخت API ID، سریع‌ترین و سازگارترین روش رسمی اپل.\n"
+                "• **🤖 ورود با API سرور:** استفاده از API پیش‌فرض تنظیم‌شده روی سرور.\n"
+                "• **🔑 ورود اختصاصی:** وارد کردن API ID و API Hash اختصاصی خودتان از my.telegram.org."
+            )
+            await ev.edit(menu_text, buttons=login_buttons)
+            return
+
+        elif data == "login_preset_macos":
+            preset = TELEGRAM_PRESETS["macos"]
+            user_login_states[user_id] = {
+                "step": "ENTER_PHONE",
+                "api_id": preset["api_id"],
+                "api_hash": preset["api_hash"],
+                "device_model": preset["device_model"],
+                "system_version": preset["system_version"],
+                "app_version": preset["app_version"]
+            }
+            cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
+            await ev.edit(
+                "📱 **ورود سریع با Telegram macOS (رسمی اپل)**\n\n"
+                "لطفاً **شماره تلفن** حساب تلگرام خود را با کد کشور وارد کنید:\n"
+                "(مثال: `+989123456789`)\n\n"
+                "💡 نیازی به ساخت یا وارد کردن API ID ندارید.",
+                buttons=cancel_btn
+            )
+            return
+
+        elif data == "login_preset_server":
+            s_api_id = bot_cfg.get("bot_api_id")
+            s_api_hash = bot_cfg.get("bot_api_hash")
+            if not s_api_id or not s_api_hash:
+                await ev.answer("❌ API سرور پیکربندی نشده است.", alert=True)
+                return
+            preset = TELEGRAM_PRESETS["server"]
+            user_login_states[user_id] = {
+                "step": "ENTER_PHONE",
+                "api_id": s_api_id,
+                "api_hash": s_api_hash,
+                "device_model": preset["device_model"],
+                "system_version": preset["system_version"],
+                "app_version": preset["app_version"]
+            }
+            cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
+            await ev.edit(
+                "📱 **ورود با API سرور**\n\n"
+                "لطفاً **شماره تلفن** حساب تلگرام خود را با کد کشور وارد کنید:\n"
+                "(مثال: `+989123456789`)",
+                buttons=cancel_btn
+            )
+            return
+
+        elif data == "login_custom_creds":
+            user_login_states[user_id] = {"step": "ENTER_API_ID"}
+            cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
+            await ev.edit(
+                "🔑 **ورود با API ID و Hash اختصاصی**\n\n"
+                "لطفاً **API ID** خود را از سایت my.telegram.org دریافت و وارد کنید (مثال: `1234567`):\n\n"
+                "(جهت انصراف، دکمه زیر یا دستور `/cancel` را لمس کنید)",
+                buttons=cancel_btn
+            )
             return
 
         elif data == "use_saved_creds":
@@ -540,16 +719,13 @@ async def start_bot_manager(main_config: dict):
             user_login_states[user_id] = {
                 "step": "ENTER_PHONE",
                 "api_id": api_id,
-                "api_hash": api_hash
+                "api_hash": api_hash,
+                "device_model": u_info.get("device_model", "PC 64bit"),
+                "system_version": u_info.get("system_version", "Windows 11"),
+                "app_version": u_info.get("app_version", "5.4.1")
             }
             cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
             await ev.edit("📱 لطفاً **شماره تلفن** حساب تلگرام خود را با کد کشور وارد کنید (مثال: `+989123456789`):", buttons=cancel_btn)
-            return
-
-        elif data == "enter_new_creds":
-            user_login_states[user_id] = {"step": "ENTER_API_ID"}
-            cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
-            await ev.edit("🔑 لطفاً **API ID** جدید حساب تلگرام خود را وارد کنید:", buttons=cancel_btn)
             return
 
         elif data == "cancel_login":
@@ -559,6 +735,45 @@ async def start_bot_manager(main_config: dict):
                 except Exception: pass
             buttons = get_main_menu_buttons(user_id, bot_cfg, bot_dt)
             await ev.edit("❌ فرآیند ورود لغو شد.", buttons=buttons)
+            return
+
+        elif data.startswith("numpad_"):
+            action = data.replace("numpad_", "")
+            state = user_login_states.get(user_id)
+            if not state or state.get("step") != "ENTER_OTP":
+                await ev.answer("درخواست ورود منقضی شده است.", alert=True)
+                return
+
+            current_otp = state.get("entered_otp", "")
+            if action == "del":
+                current_otp = current_otp[:-1]
+            elif action == "submit":
+                if len(current_otp) < 4:
+                    await ev.answer("لطفاً کد تایید را کامل وارد کنید.", alert=True)
+                    return
+                await ev.answer("در حال بررسی کد تایید...")
+                await process_otp_sign_in(ev, user_id, current_otp, state, main_config, bot)
+                return
+            elif action in "0123456789":
+                if len(current_otp) < 7:
+                    current_otp += action
+
+            state["entered_otp"] = current_otp
+            masked_code = "  ".join(list(current_otp)) if current_otp else "— — — — —"
+
+            otp_ui_text = (
+                f"📩 **کد تایید ارسال شده به تلگرام را وارد کنید:**\n\n"
+                f"🔢 **کد وارد شده:** `{masked_code}`\n\n"
+                f"🛡️ **روش‌های ورود امن (ضد باطل شدن کد توسط تلگرام):**\n"
+                f"۱. **کیبورد شیشه‌ای (کاملاً ایمن):** ارقام کد را با دکمه‌های زیر لمس کرده و «✅ تایید و ورود» را بزنید.\n"
+                f"۲. **ارسال با اعداد فارسی:** ارسال در چت با اعداد فارسی (مثال: `۱۲۳۴۵`)\n"
+                f"۳. **ارسال با فاصله:** بین ارقام فاصله بگذارید (مثال: `1 2 3 4 5` یا `1-2-3-4-5`)\n\n"
+                f"⚠️ **مهم:** از کپی و پیست مستقیم کد انگلیسی بدون فاصله خودداری کنید."
+            )
+            try:
+                await ev.edit(otp_ui_text, buttons=get_otp_numpad_buttons(current_otp))
+            except Exception:
+                pass
             return
 
         # ADMIN PANEL BUTTONS
@@ -824,6 +1039,9 @@ async def start_bot_manager(main_config: dict):
                 state["phone"] = phone
                 api_id = state["api_id"]
                 api_hash = state["api_hash"]
+                device_model = state.get("device_model", "PC 64bit")
+                system_version = state.get("system_version", "Windows 11")
+                app_version = state.get("app_version", "5.4.1")
 
                 await ev.respond("⚡ در حال اتصال به سرور تلگرام و ارسال کد تایید...")
                 sess_file = get_session_filepath(user_id)
@@ -832,21 +1050,34 @@ async def start_bot_manager(main_config: dict):
                     except Exception: pass
 
                 proxy_kw = get_proxy_kwargs(main_config)
-                temp_client = TelegramClient(f"sessions/session_{user_id}", api_id, api_hash, **proxy_kw)
+                temp_client = TelegramClient(
+                    f"sessions/session_{user_id}",
+                    api_id,
+                    api_hash,
+                    device_model=device_model,
+                    system_version=system_version,
+                    app_version=app_version,
+                    **proxy_kw
+                )
                 try:
                     await temp_client.connect()
                     res = await temp_client.send_code_request(phone)
                     state["temp_client"] = temp_client
                     state["phone_code_hash"] = res.phone_code_hash
                     state["step"] = "ENTER_OTP"
-                    await ev.respond(
-                        "📩 **کد تایید** ارسال شده به تلگرام خود را وارد کنید:\n\n"
-                        "💡 **جهت جلوگیری از مسدود شدن پیام توسط تلگرام:**\n"
-                        "• ارسال با **اعداد فارسی** بدون فاصله (مثال: `۱۲۳۴۵`)\n"
-                        "• یا ارسال با **اعداد انگلیسی** همراه با فاصله یا خط‌تیره (مثال: `1 2 3 4 5` یا `1-2-3-4-5`)\n\n"
-                        "🔒 پیام حاوی کد تایید بلافاصله جهت حفظ امنیت شما حذف خواهد شد.",
-                        buttons=cancel_btn
+                    state["entered_otp"] = ""
+                    
+                    otp_msg_text = (
+                        "📩 **کد تایید ورود به تلگرام شما ارسال شد!**\n\n"
+                        "🔢 **کد وارد شده:** `— — — — —`\n\n"
+                        "🛡️ **روش‌های ورود امن (ضد باطل شدن کد توسط تلگرام):**\n"
+                        "۱. **کیبورد شیشه‌ای (پیشنهادی و کاملاً ایمن):** ارقام کد را با دکمه‌های زیر لمس کرده و دکمه «✅ تایید و ورود» را بزنید.\n"
+                        "۲. **ارسال با اعداد فارسی:** کد را با اعداد فارسی بفرستید (مثال: `۱۲۳۴۵`)\n"
+                        "۳. **ارسال با فاصله یا خط‌تیره:** بین هر رقم فاصله بگذارید (مثال: `1 2 3 4 5` یا `1-2-3-4-5`)\n\n"
+                        "⚠️ **هشدار:** هرگز کد را به صورت انگلیسی پیوسته کپی‌پیست نکنید، در غیر این صورت تلگرام کد را فاش شده دانسته و سریعاً باطل می‌کند!\n"
+                        "🔒 پیام‌های شما بلافاصله پس از دریافت جهت حفظ امنیت حذف خواهند شد."
                     )
+                    await ev.respond(otp_msg_text, buttons=get_otp_numpad_buttons(""))
                 except PhoneNumberInvalidError:
                     await temp_client.disconnect()
                     await ev.respond("❌ شماره تلفن وارد شده معتبر نیست. لطفاً مجدداً شماره تلفن را وارد کنید:", buttons=cancel_btn)
@@ -864,63 +1095,11 @@ async def start_bot_manager(main_config: dict):
 
                 raw_txt = convert_persian_digits(text or "")
                 otp_code = "".join(re.findall(r'\d', raw_txt))
-                temp_client = state.get("temp_client")
-                phone = state.get("phone")
-                phone_code_hash = state.get("phone_code_hash")
-                api_id = state["api_id"]
-                api_hash = state["api_hash"]
+                if not otp_code or len(otp_code) < 4:
+                    await ev.respond("❌ کد تایید معتبر نیست. لطفاً از کیبورد شیشه‌ای استفاده کنید یا ارقام را با فاصله/اعداد فارسی ارسال نمایید:", buttons=get_otp_numpad_buttons(""))
+                    return
 
-                try:
-                    await temp_client.sign_in(phone=phone, code=otp_code, phone_code_hash=phone_code_hash)
-                    me = await temp_client.get_me()
-                    await temp_client.disconnect()
-
-                    # Save credentials
-                    uid_str = str(user_id)
-                    bot_dt["users"].setdefault(uid_str, {})
-                    bot_dt["users"][uid_str]["api_id"] = api_id
-                    bot_dt["users"][uid_str]["api_hash"] = api_hash
-                    bot_dt["users"][uid_str]["phone"] = phone
-                    bot_dt["users"][uid_str]["first_name"] = getattr(me, 'first_name', '') or ''
-                    bot_dt["users"][uid_str]["username"] = getattr(me, 'username', '') or ''
-                    save_bot_data(bot_dt)
-
-                    proxy_kw = get_proxy_kwargs(main_config)
-                    success, msg = await start_user_client(user_id, api_id, api_hash, proxy_kw)
-                    user_login_states.pop(user_id, None)
-                    if success:
-                        await ev.respond(f"🎉 **ورود با موفقیت انجام شد!**\n{msg}")
-                        admin_id = bot_cfg.get("admin_id")
-                        if admin_id and str(admin_id) != str(user_id):
-                            try:
-                                uname = f"@{me.username}" if getattr(me, 'username', None) else "بدون یوزرنیم"
-                                await bot.send_message(
-                                    admin_id,
-                                    f"🔔 **ورود سشن جدید کاربر:**\n\n"
-                                    f"👤 کاربر: {me.first_name} ({uname})\n"
-                                    f"🆔 آیدی: `{user_id}`\n"
-                                    f"📱 شماره: `{phone}`\n"
-                                    f"⚡ زمان: {time.strftime('%Y-%m-%d %H:%M:%S')}"
-                                )
-                            except Exception:
-                                pass
-                    else:
-                        await ev.respond(f"❌ خطا در فعال‌سازی سشن: {msg}")
-
-                except SessionPasswordNeededError:
-                    state["step"] = "ENTER_2FA"
-                    await ev.respond(
-                        "🔐 این حساب دارای **رمز عبور دو مرحله‌ای (2FA)** است.\nلطفاً رمز عبور خود را وارد کنید:\n\n"
-                        "🔒 پیام حاوی رمز عبور بلافاصله جهت حفظ امنیت شما حذف خواهد شد.",
-                        buttons=cancel_btn
-                    )
-                except (PhoneCodeInvalidError, PhoneCodeExpiredError):
-                    await ev.respond("❌ کد تایید اشتباه یا منقضی شده است. لطفاً مجدداً وارد کنید:", buttons=cancel_btn)
-                except Exception as e:
-                    try: await temp_client.disconnect()
-                    except Exception: pass
-                    await ev.respond(f"❌ خطا در ورود: {e}")
-                    user_login_states.pop(user_id, None)
+                await process_otp_sign_in(ev, user_id, otp_code, state, main_config, bot)
 
             elif step == "ENTER_2FA":
                 try:
@@ -933,6 +1112,9 @@ async def start_bot_manager(main_config: dict):
                 phone = state.get("phone", "")
                 api_id = state["api_id"]
                 api_hash = state["api_hash"]
+                device_model = state.get("device_model", "PC 64bit")
+                system_version = state.get("system_version", "Windows 11")
+                app_version = state.get("app_version", "5.4.1")
 
                 try:
                     await temp_client.sign_in(password=password)
@@ -946,13 +1128,22 @@ async def start_bot_manager(main_config: dict):
                     bot_dt["users"][uid_str]["phone"] = phone
                     bot_dt["users"][uid_str]["first_name"] = getattr(me, 'first_name', '') or ''
                     bot_dt["users"][uid_str]["username"] = getattr(me, 'username', '') or ''
+                    if device_model: bot_dt["users"][uid_str]["device_model"] = device_model
+                    if system_version: bot_dt["users"][uid_str]["system_version"] = system_version
+                    if app_version: bot_dt["users"][uid_str]["app_version"] = app_version
                     save_bot_data(bot_dt)
 
                     proxy_kw = get_proxy_kwargs(main_config)
-                    success, msg = await start_user_client(user_id, api_id, api_hash, proxy_kw)
+                    success, msg = await start_user_client(
+                        user_id, api_id, api_hash, proxy_kw,
+                        device_model=device_model,
+                        system_version=system_version,
+                        app_version=app_version
+                    )
                     user_login_states.pop(user_id, None)
+                    buttons = get_main_menu_buttons(user_id, bot_cfg, bot_dt)
                     if success:
-                        await ev.respond(f"🎉 **ورود با موفقیت انجام شد!**\n{msg}")
+                        await ev.respond(f"🎉 **ورود با موفقیت انجام شد!**\n{msg}", buttons=buttons)
                         admin_id = bot_cfg.get("admin_id")
                         if admin_id and str(admin_id) != str(user_id):
                             try:
@@ -968,7 +1159,7 @@ async def start_bot_manager(main_config: dict):
                             except Exception:
                                 pass
                     else:
-                        await ev.respond(f"❌ خطا در فعال‌سازی سشن: {msg}")
+                        await ev.respond(f"❌ خطا در فعال‌سازی سشن: {msg}", buttons=buttons)
 
                 except PasswordHashInvalidError:
                     await ev.respond("❌ رمز عبور دو مرحله‌ای اشتباه است. لطفاً مجدداً وارد کنید:", buttons=cancel_btn)
