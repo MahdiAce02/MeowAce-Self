@@ -13,6 +13,7 @@ from telethon import TelegramClient, events
 from telethon.errors import RPCError
 
 from modules.autocatch import autocatch_command, handle_autocatch_trigger
+from modules.autobat import autobat_command, handle_autobat_trigger, handle_manual_bat
 from modules.automeow import automeow_command, resume_automeow_tasks, process_schedule_event
 from modules.autofish import autofish_command, resume_autofish_tasks
 from modules.autofridge import autofridge_command, resume_autofridge_tasks
@@ -171,6 +172,11 @@ def attach_selfbot_handlers(client: TelegramClient, user_id: int) -> None:
     async def _autocatch_trigger_edit(event):
         await handle_autocatch_trigger(event, is_edit=True)
 
+    # Autobat trigger event handlers
+    @client.on(events.NewMessage)
+    async def _autobat_trigger_new(event):
+        await handle_autobat_trigger(event)
+
     # Command pattern event handlers
     @client.on(events.NewMessage(pattern='(?i)^/?automeow($|\\s+)'))
     async def _automeow_handler(event):
@@ -187,6 +193,17 @@ def attach_selfbot_handlers(client: TelegramClient, user_id: int) -> None:
     @client.on(events.NewMessage(pattern='(?i)^/?autocatch($|\\s+)'))
     async def _autocatch_handler(event):
         await autocatch_command(event)
+
+    @client.on(events.NewMessage(pattern='(?i)^/?autobat($|\\s+)'))
+    async def _autobat_handler(event):
+        await autobat_command(event)
+
+    @client.on(events.NewMessage(outgoing=True))
+    async def _manual_bat_handler(event):
+        try:
+            await handle_manual_bat(event)
+        except Exception as bat_err:
+            print(f"[!] Manual bat error (user {user_id}): {bat_err}")
 
     @client.on(events.NewMessage(pattern='(?i)^/?show(?:\\s+(.+))?'))
     async def _show_handler(event):
@@ -210,6 +227,10 @@ def attach_selfbot_handlers(client: TelegramClient, user_id: int) -> None:
     async def _alias_interceptor(event):
         message_text = event.raw_text or ""
         if not message_text:
+            return
+
+        # Skip if message was consumed as manual batt reply
+        if message_text.strip().lower().lstrip("/.=!") == "batt" and getattr(event, 'is_reply', False):
             return
 
         matched_alias, target_commands = resolve_alias(client.uid, message_text)

@@ -35,6 +35,8 @@ def read_config():
     try:
         with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
             cfg_json = json.load(f)
+            if cfg_json.get("multi_session", False):
+                return cfg_json
             a_id = cfg_json.get("api_id")
             a_hash = cfg_json.get("api_hash")
             if not a_id or a_id == 123456 or not a_hash or a_hash == "YOUR_API_HASH_HERE":
@@ -106,6 +108,14 @@ async def status_command(ev):
 
 async def main():
     conf = read_config()
+
+    # Route to MultiSession Bot Manager if enabled
+    if conf.get("multi_session", False):
+        print("[+] Multi-Session mode enabled. Starting Telegram Bot Manager...")
+        from bot_manager import start_bot_manager
+        await start_bot_manager(conf)
+        return
+
     api_id = conf["api_id"]
     api_hash = conf["api_hash"]
     

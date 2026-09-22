@@ -18,13 +18,16 @@ from multisession import (
     load_bot_data, save_bot_data,
     is_admin, can_user_access,
     start_user_client, stop_user_client,
-    get_session_filepath, active_user_clients
+    get_session_filepath, active_user_clients,
+    ensure_environment_directories,
+    resume_all_sessions, subscription_monitor_loop
 )
 from modules.proxy import get_proxy_kwargs
 from modules.utils import convert_persian_digits
 
 user_login_states = {}
 user_admin_states = {}
+last_code_request_time = {}
 bot_client_instance = None
 
 def get_main_menu_buttons(user_id: int, bot_config: dict, bot_data: dict):
@@ -71,6 +74,7 @@ def get_admin_panel_buttons(bot_config: dict):
         [Button.inline(f"تست رایگان: {trial_str}", b"toggle_trial")],
         [Button.inline("✏️ تغییر قیمت اشتراک", b"set_price"), Button.inline("✏️ تغییر مدت اشتراک (روز)", b"set_days")],
         [Button.inline("✏️ تغییر مدت تست (ساعت)", b"set_trial_hrs"), Button.inline("💳 تغییر شماره کارت", b"set_card")],
+        [Button.inline("📊 آمار و گزارش زنده", b"admin_stats"), Button.inline("📢 پیام همگانی", b"admin_broadcast")],
         [Button.inline("👥 لیست کاربران و سشن‌ها", b"admin_list_users"), Button.inline("📋 لیست وایت‌لیست", b"admin_list_wl")],
         [Button.inline("➕ افزودن به وایت‌لیست", b"admin_add_wl"), Button.inline("➖ حذف از وایت‌لیست", b"admin_rem_wl")],
         [Button.inline("➕ اعطای اشتراک", b"admin_add_sub"), Button.inline("🛑 توقف سشن کاربر", b"admin_stop_user")],
@@ -167,6 +171,7 @@ async def notify_admin_receipt(bot: TelegramClient, payment_id: str, user_id: in
 
 async def start_bot_manager(main_config: dict):
     global bot_client_instance
+    ensure_environment_directories()
     bot_config = load_bot_config()
     
     bot_token = bot_config.get("bot_token")
@@ -189,6 +194,29 @@ async def start_bot_manager(main_config: dict):
 
     me = await bot.get_me()
     print(f"[+] MultiSession Management Bot started as: @{me.username} [ID: {me.id}]")
+
+    @bot.on(events.NewMessage(pattern=r'^/cancel'))
+    async def _cancel_cmd(ev):
+        user_id = ev.sender_id
+        old_st = user_login_states.pop(user_id, None)
+        if old_st and old_st.get("temp_client"):
+            try: await old_st["temp_client"].disconnect()
+            except Exception: pass
+        user_admin_states.pop(user_id, None)
+        bot_cfg = load_bot_config()
+        bot_dt = load_bot_data()
+        buttons = get_main_menu_buttons(user_id, bot_cfg, bot_dt)
+        await ev.respond("❌ تمامی عملیات‌های جاری لغو شدند.", buttons=buttons)
+
+    @bot.on(events.NewMessage(pattern=r'^/help'))
+    async def _help_cmd(ev):
+        help_text = (
+            "💡 **راهنمای ربات مدیریت MeowAce-Self:**\n\n"
+            "• با زدن دکمه «🔐 ورود / شروع حساب» و وارد کردن مشخصات، سلف‌بات روی اکانت شما فعال خواهد شد.\n"
+            "• در هر مرحله برای انصراف می‌توانید از دستور `/cancel` استفاده کنید.\n"
+            "• پس از ورود، دستورات سلف‌بات نظیر `/status`، `/automeow`، `/autofish`، `/autocatch` و `/autobat` در تلگرام شما فعال خواهند بود."
+        )
+        await ev.respond(help_text)
 
     @bot.on(events.NewMessage(pattern=r'^/start'))
     async def _start_handler(ev):
@@ -430,7 +458,8 @@ async def start_bot_manager(main_config: dict):
                 )
             else:
                 user_login_states[user_id] = {"step": "ENTER_API_ID"}
-                await ev.edit("🔑 لطفاً **API ID** حساب تلگرام خود را وارد کنید (مثال: `1234567`):")
+                cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
+                await ev.edit("🔑 لطفاً **API ID** حساب تلگرام خود را وارد کنید (مثال: `1234567`):\n\n(جهت لغو، دستور `/cancel` یا دکمه زیر را لمس کنید)", buttons=cancel_btn)
             return
 
         elif data == "use_saved_creds":
@@ -444,12 +473,23 @@ async def start_bot_manager(main_config: dict):
                 "api_id": api_id,
                 "api_hash": api_hash
             }
-            await ev.edit("📱 لطفاً **شماره تلفن** حساب تلگرام خود را با کد کشور وارد کنید (مثال: `+989123456789`):")
+            cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
+            await ev.edit("📱 لطفاً **شماره تلفن** حساب تلگرام خود را با کد کشور وارد کنید (مثال: `+989123456789`):", buttons=cancel_btn)
             return
 
         elif data == "enter_new_creds":
             user_login_states[user_id] = {"step": "ENTER_API_ID"}
-            await ev.edit("🔑 لطفاً **API ID** جدید حساب تلگرام خود را وارد کنید:")
+            cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
+            await ev.edit("🔑 لطفاً **API ID** جدید حساب تلگرام خود را وارد کنید:", buttons=cancel_btn)
+            return
+
+        elif data == "cancel_login":
+            old_st = user_login_states.pop(user_id, None)
+            if old_st and old_st.get("temp_client"):
+                try: await old_st["temp_client"].disconnect()
+                except Exception: pass
+            buttons = get_main_menu_buttons(user_id, bot_cfg, bot_dt)
+            await ev.edit("❌ فرآیند ورود لغو شد.", buttons=buttons)
             return
 
         # ADMIN PANEL BUTTONS
@@ -500,6 +540,38 @@ async def start_bot_manager(main_config: dict):
                 "admin_stop_user": "🛑 آیدی عددی کاربر را جهت متوقف کردن سشن وارد کنید:"
             }
             await ev.edit(prompts[data], buttons=[[Button.inline("🔙 لغو", b"btn_admin_panel")]])
+            return
+
+        elif data == "admin_stats":
+            if not is_admin(user_id, bot_cfg): return
+            users = bot_dt.get("users", {})
+            total_users = len(users)
+            online_users = len(active_user_clients)
+            wl_count = len(bot_dt.get("whitelist", []))
+            pending_pays = len(bot_dt.get("pending_payments", {}))
+            stats_text = (
+                f"📊 **آمار کلی ربات مدیریت:**\n\n"
+                f"👥 کل کاربران ثبت شده: `{total_users}`\n"
+                f"⚡ سشن‌های آنلاین و فعال: `{online_users}`\n"
+                f"📋 کاربران وایت‌لیست: `{wl_count}`\n"
+                f"💳 تراکنش‌های در انتظار تایید: `{pending_pays}`\n\n"
+                f"⚙️ **وضعیت سیستم:**\n"
+                f"• مود ربات: `{bot_cfg.get('mode', 'private')}`\n"
+                f"• مود دسترسی: `{bot_cfg.get('public_type', 'free')}`\n"
+                f"• تست رایگان: `{'روشن' if bot_cfg.get('trial', {}).get('enabled') else 'خاموش'}`"
+            )
+            await ev.edit(stats_text, buttons=[[Button.inline("🔙 بازگشت", b"btn_admin_panel")]])
+            return
+
+        elif data == "admin_broadcast":
+            if not is_admin(user_id, bot_cfg): return
+            user_admin_states[user_id] = "admin_broadcast"
+            await ev.edit(
+                "📢 **ارسال پیام همگانی:**\n\n"
+                "لطفاً متن پیامی که می‌خواهید برای تمام کاربران ارسال شود را وارد کنید:\n"
+                "(جهت لغو، دستور `/cancel` را بفرستید)",
+                buttons=[[Button.inline("🔙 لغو", b"btn_admin_panel")]]
+            )
             return
 
         elif data == "admin_list_users":
@@ -600,6 +672,20 @@ async def start_bot_manager(main_config: dict):
                     await ev.respond(f"🛑 سشن کاربر `{target_uid}` متوقف و لاگ‌اوت شد.")
                 except Exception as e:
                     await ev.respond(f"❌ خطا در متوقف سازی سشن: {e}")
+            elif action == "admin_broadcast":
+                users = bot_dt.get("users", {})
+                sent_count = 0
+                failed_count = 0
+                progress_msg = await ev.respond("⏳ در حال ارسال پیام همگانی به تمامی کاربران...")
+                for target_uid_str in list(users.keys()):
+                    try:
+                        t_uid = int(target_uid_str)
+                        await bot.send_message(t_uid, f"📢 **اطلاعیه مدیریت:**\n\n{text}")
+                        sent_count += 1
+                        await asyncio.sleep(0.05)
+                    except Exception:
+                        failed_count += 1
+                await progress_msg.edit(f"✅ پیام همگانی با موفقیت ارسال شد.\n\n📤 موفق: `{sent_count}`\n❌ ناموفق: `{failed_count}`")
             return
 
         # Handle Receipt Submission
@@ -614,22 +700,31 @@ async def start_bot_manager(main_config: dict):
         if user_id in user_login_states:
             state = user_login_states[user_id]
             step = state.get("step")
+            cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
 
             if step == "ENTER_API_ID":
                 try:
                     api_id = int(text)
                     state["api_id"] = api_id
                     state["step"] = "ENTER_API_HASH"
-                    await ev.respond("🔑 عالی! حالا **API Hash** حساب تلگرام خود را وارد کنید:")
+                    await ev.respond("🔑 عالی! حالا **API Hash** حساب تلگرام خود را وارد کنید:", buttons=cancel_btn)
                 except ValueError:
-                    await ev.respond("❌ API ID باید عدد باشد. لطفاً مجدداً وارد کنید:")
+                    await ev.respond("❌ API ID باید فقط عدد باشد. لطفاً مجدداً وارد کنید:", buttons=cancel_btn)
 
             elif step == "ENTER_API_HASH":
                 state["api_hash"] = text
                 state["step"] = "ENTER_PHONE"
-                await ev.respond("📱 لطفاً **شماره تلفن** حساب تلگرام خود را با کد کشور وارد کنید (مثال: `+989123456789`):")
+                await ev.respond("📱 لطفاً **شماره تلفن** حساب تلگرام خود را با کد کشور وارد کنید (مثال: `+989123456789`):", buttons=cancel_btn)
 
             elif step == "ENTER_PHONE":
+                now = time.time()
+                last_req = last_code_request_time.get(user_id, 0)
+                if now - last_req < 30:
+                    wait_s = int(30 - (now - last_req))
+                    await ev.respond(f"⏳ لطفاً {wait_s} ثانیه دیگر جهت درخواست مجدد کد شکیبا باشید.", buttons=cancel_btn)
+                    return
+                last_code_request_time[user_id] = now
+
                 phone = text.replace(" ", "")
                 state["phone"] = phone
                 api_id = state["api_id"]
@@ -653,11 +748,13 @@ async def start_bot_manager(main_config: dict):
                         "📩 **کد تایید** ارسال شده به تلگرام خود را وارد کنید:\n\n"
                         "💡 **جهت جلوگیری از مسدود شدن پیام توسط تلگرام:**\n"
                         "• ارسال با **اعداد فارسی** بدون فاصله (مثال: `۱۲۳۴۵`)\n"
-                        "• یا ارسال با **اعداد انگلیسی** همراه با فاصله یا خط‌تیره (مثال: `1 2 3 4 5` یا `1-2-3-4-5`)"
+                        "• یا ارسال با **اعداد انگلیسی** همراه با فاصله یا خط‌تیره (مثال: `1 2 3 4 5` یا `1-2-3-4-5`)\n\n"
+                        "🔒 پیام حاوی کد تایید بلافاصله جهت حفظ امنیت شما حذف خواهد شد.",
+                        buttons=cancel_btn
                     )
                 except PhoneNumberInvalidError:
                     await temp_client.disconnect()
-                    await ev.respond("❌ شماره تلفن وارد شده معتبر نیست. لطفاً مجدداً شماره تلفن را وارد کنید:")
+                    await ev.respond("❌ شماره تلفن وارد شده معتبر نیست. لطفاً مجدداً شماره تلفن را وارد کنید:", buttons=cancel_btn)
                 except Exception as e:
                     try: await temp_client.disconnect()
                     except Exception: pass
@@ -665,6 +762,11 @@ async def start_bot_manager(main_config: dict):
                     user_login_states.pop(user_id, None)
 
             elif step == "ENTER_OTP":
+                try:
+                    await ev.delete()
+                except Exception:
+                    pass
+
                 raw_txt = convert_persian_digits(text or "")
                 otp_code = "".join(re.findall(r'\d', raw_txt))
                 temp_client = state.get("temp_client")
@@ -680,9 +782,12 @@ async def start_bot_manager(main_config: dict):
 
                     # Save credentials
                     uid_str = str(user_id)
+                    bot_dt["users"].setdefault(uid_str, {})
                     bot_dt["users"][uid_str]["api_id"] = api_id
                     bot_dt["users"][uid_str]["api_hash"] = api_hash
                     bot_dt["users"][uid_str]["phone"] = phone
+                    bot_dt["users"][uid_str]["first_name"] = getattr(me, 'first_name', '') or ''
+                    bot_dt["users"][uid_str]["username"] = getattr(me, 'username', '') or ''
                     save_bot_data(bot_dt)
 
                     proxy_kw = get_proxy_kwargs(main_config)
@@ -690,14 +795,32 @@ async def start_bot_manager(main_config: dict):
                     user_login_states.pop(user_id, None)
                     if success:
                         await ev.respond(f"🎉 **ورود با موفقیت انجام شد!**\n{msg}")
+                        admin_id = bot_cfg.get("admin_id")
+                        if admin_id and str(admin_id) != str(user_id):
+                            try:
+                                uname = f"@{me.username}" if getattr(me, 'username', None) else "بدون یوزرنیم"
+                                await bot.send_message(
+                                    admin_id,
+                                    f"🔔 **ورود سشن جدید کاربر:**\n\n"
+                                    f"👤 کاربر: {me.first_name} ({uname})\n"
+                                    f"🆔 آیدی: `{user_id}`\n"
+                                    f"📱 شماره: `{phone}`\n"
+                                    f"⚡ زمان: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+                                )
+                            except Exception:
+                                pass
                     else:
                         await ev.respond(f"❌ خطا در فعال‌سازی سشن: {msg}")
 
                 except SessionPasswordNeededError:
                     state["step"] = "ENTER_2FA"
-                    await ev.respond("🔐 این حساب دارای **رمز عبور دو مرحله‌ای (2FA)** است. لطفاً رمز عبور خود را وارد کنید:")
+                    await ev.respond(
+                        "🔐 این حساب دارای **رمز عبور دو مرحله‌ای (2FA)** است.\nلطفاً رمز عبور خود را وارد کنید:\n\n"
+                        "🔒 پیام حاوی رمز عبور بلافاصله جهت حفظ امنیت شما حذف خواهد شد.",
+                        buttons=cancel_btn
+                    )
                 except (PhoneCodeInvalidError, PhoneCodeExpiredError):
-                    await ev.respond("❌ کد تایید اشتباه یا منقضی شده است. لطفاً کد تایید را مجدداً وارد کنید:")
+                    await ev.respond("❌ کد تایید اشتباه یا منقضی شده است. لطفاً مجدداً وارد کنید:", buttons=cancel_btn)
                 except Exception as e:
                     try: await temp_client.disconnect()
                     except Exception: pass
@@ -705,8 +828,14 @@ async def start_bot_manager(main_config: dict):
                     user_login_states.pop(user_id, None)
 
             elif step == "ENTER_2FA":
+                try:
+                    await ev.delete()
+                except Exception:
+                    pass
+
                 password = text
                 temp_client = state.get("temp_client")
+                phone = state.get("phone", "")
                 api_id = state["api_id"]
                 api_hash = state["api_hash"]
 
@@ -716,8 +845,12 @@ async def start_bot_manager(main_config: dict):
                     await temp_client.disconnect()
 
                     uid_str = str(user_id)
+                    bot_dt["users"].setdefault(uid_str, {})
                     bot_dt["users"][uid_str]["api_id"] = api_id
                     bot_dt["users"][uid_str]["api_hash"] = api_hash
+                    bot_dt["users"][uid_str]["phone"] = phone
+                    bot_dt["users"][uid_str]["first_name"] = getattr(me, 'first_name', '') or ''
+                    bot_dt["users"][uid_str]["username"] = getattr(me, 'username', '') or ''
                     save_bot_data(bot_dt)
 
                     proxy_kw = get_proxy_kwargs(main_config)
@@ -725,13 +858,39 @@ async def start_bot_manager(main_config: dict):
                     user_login_states.pop(user_id, None)
                     if success:
                         await ev.respond(f"🎉 **ورود با موفقیت انجام شد!**\n{msg}")
+                        admin_id = bot_cfg.get("admin_id")
+                        if admin_id and str(admin_id) != str(user_id):
+                            try:
+                                uname = f"@{me.username}" if getattr(me, 'username', None) else "بدون یوزرنیم"
+                                await bot.send_message(
+                                    admin_id,
+                                    f"🔔 **ورود سشن جدید کاربر (با 2FA):**\n\n"
+                                    f"👤 کاربر: {me.first_name} ({uname})\n"
+                                    f"🆔 آیدی: `{user_id}`\n"
+                                    f"📱 شماره: `{phone}`\n"
+                                    f"⚡ زمان: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+                                )
+                            except Exception:
+                                pass
                     else:
                         await ev.respond(f"❌ خطا در فعال‌سازی سشن: {msg}")
 
                 except PasswordHashInvalidError:
-                    await ev.respond("❌ رمز عبور دو مرحله‌ای اشتباه است. لطفاً مجدداً وارد کنید:")
+                    await ev.respond("❌ رمز عبور دو مرحله‌ای اشتباه است. لطفاً مجدداً وارد کنید:", buttons=cancel_btn)
                 except Exception as e:
                     try: await temp_client.disconnect()
                     except Exception: pass
                     await ev.respond(f"❌ خطا در ورود: {e}")
                     user_login_states.pop(user_id, None)
+
+    # Start background auto-resumption and subscription monitor
+    asyncio.create_task(resume_all_sessions(main_config))
+    async def _notify_user(uid: int, msg: str):
+        try:
+            await bot.send_message(uid, msg)
+        except Exception as e:
+            print(f"[!] Notification error to {uid}: {e}")
+    asyncio.create_task(subscription_monitor_loop(_notify_user))
+
+    print("[+] MultiSession Management Bot is fully running and ready. Waiting for events...")
+    await bot.run_until_disconnected()
