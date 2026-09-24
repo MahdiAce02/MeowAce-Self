@@ -69,12 +69,22 @@ async def schedule_next_meow(client, cid: int, remaining_cd: int, main_cd: int =
     except Exception:
         existing_sched = []
         
+    words = ["مع", "میو", "میو میو", "معو"]
+    meow_sched = [m for m in existing_sched if m.text and any(w in m.text for w in words)]
+    if len(meow_sched) > 90:
+        excess_ids = [m.id for m in meow_sched[90:]]
+        try:
+            await client.delete_messages(cid, excess_ids)
+            existing_sched = [m for m in existing_sched if m.id not in excess_ids]
+            print(f"[AutoMeow] Trimmed {len(excess_ids)} excess meow messages in chat {cid}")
+        except Exception:
+            pass
+
     existing_count = len(existing_sched) if existing_sched else 0
     needed = target_count - existing_count
     if needed <= 0:
         return
 
-    words = ["مع", "میو", "میو میو", "معو"]
     now_ts = time.time()
     
     if existing_count == 0:
@@ -269,7 +279,13 @@ async def resume_automeow_tasks(client):
         elif mode == "schedule":
             try:
                 msgs = await client.get_messages(cid, scheduled=True)
-                if not msgs:
+                words = ["مع", "میو", "میو میو", "معو"]
+                meow_msgs = [m for m in msgs if m.text and any(w in m.text for w in words)]
+                if len(meow_msgs) > 90:
+                    excess_ids = [m.id for m in meow_msgs[90:]]
+                    await client.delete_messages(cid, excess_ids)
+                    print(f"[AutoMeow] Trimmed {len(excess_ids)} excess meow messages on resume in chat {cid}")
+                elif not msgs:
                     asyncio.create_task(start_automeow_schedule(client, cid, target_count=count))
             except Exception as e:
                 print(f"[!] error resuming schedule in {cid}: {e}")

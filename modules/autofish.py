@@ -99,6 +99,19 @@ async def schedule_next_fish(client, cid: int, remaining_cd: int):
     if fish_sched:
         return
 
+    # Ensure there is room in the 100-message Telegram schedule limit
+    if len(existing_sched) >= 95:
+        meow_words = ["مع", "میو", "میو میو", "معو"]
+        meow_msgs = [m for m in existing_sched if m.text and any(w in m.text for w in meow_words)]
+        if meow_msgs:
+            to_del = [m.id for m in meow_msgs[90:]] or [m.id for m in meow_msgs[-5:]]
+            if to_del:
+                try:
+                    await client.delete_messages(cid, to_del)
+                    print(f"[AutoFish] Freed {len(to_del)} slots in chat {cid}")
+                except Exception:
+                    pass
+
     buf = random.randint(3, 8) if remaining_cd > 10 else 2
     next_ts = now_ts + remaining_cd + buf
     target_dt = datetime.datetime.fromtimestamp(next_ts, tz=datetime.timezone.utc)
