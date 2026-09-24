@@ -23,7 +23,8 @@ def get_chat_meow_mode(u_id: int, cid_str: str):
     modes = config.get("modes", {})
     val = modes.get(cid_str)
     if isinstance(val, dict):
-        return val.get("mode", "off"), val.get("count", 1)
+        cnt = min(90, max(1, val.get("count", 1)))
+        return val.get("mode", "off"), cnt
     elif isinstance(val, str):
         return val, 1
     return "off", 1
@@ -35,7 +36,7 @@ def set_chat_meow_mode(u_id: int, cid_str: str, mode: str, count: int = 1):
     if mode == "off":
         config["modes"].pop(cid_str, None)
     else:
-        config["modes"][cid_str] = {"mode": mode, "count": count}
+        config["modes"][cid_str] = {"mode": mode, "count": min(90, max(1, count))}
     save_meow_config(u_id, config)
 
 def parse_cooldown(txt: str):
@@ -59,6 +60,7 @@ def parse_cooldown(txt: str):
     return None
 
 async def schedule_next_meow(client, cid: int, remaining_cd: int, main_cd: int = 255, target_count: int = 1):
+    target_count = min(90, max(1, target_count))
     uid = getattr(client, 'uid', None) or (await client.get_me()).id
     
     # Check existing scheduled messages in chat queue
@@ -178,6 +180,7 @@ async def start_automeow(client, chat_id: int):
     active_meow_loops[(uid, chat_id)] = t
 
 async def start_automeow_schedule(client, chat_id: int, target_count: int = 1):
+    target_count = min(90, max(1, target_count))
     uid = getattr(client, 'uid', None) or (await client.get_me()).id
     
     try:
@@ -297,7 +300,7 @@ async def automeow_command(ev):
             f"▸ وضعیت در این چت: {st_label}\n\n"
             f"💡 <b>راهنما:</b>\n"
             f"▸ <code>/automeow instant</code> ── بازی آنلاین لحظه‌ای (حالت زنده)\n"
-            f"▸ <code>/automeow schedule [تعداد 1-100]</code> ── زمانبندی روی سرور تلگرام (عدم آنلاین شدن اکانت 🛡️)\n"
+            f"▸ <code>/automeow schedule [تعداد 1-90]</code> ── زمانبندی روی سرور تلگرام (عدم آنلاین شدن اکانت 🛡️)\n"
             f"▸ <code>/automeow off</code> ── غیرفعال‌سازی در چت جاری",
             parse_mode='html'
         )
@@ -312,7 +315,7 @@ async def automeow_command(ev):
     elif cmd in ["schedule", "sched"]:
         target_count = 1
         if len(parts) >= 3 and parts[2].isdigit():
-            target_count = max(1, min(100, int(parts[2])))
+            target_count = max(1, min(90, int(parts[2])))
             
         set_chat_meow_mode(me_id, str_cid, "schedule", target_count)
         await stop_automeow(client, cid)
