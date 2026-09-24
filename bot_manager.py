@@ -60,26 +60,22 @@ async def login_state_janitor():
         except Exception:
             await asyncio.sleep(10)
 
-TELEGRAM_PRESETS = {
-    "macos": {
-        "title": "⚡ ورود سریع (Telegram macOS - رسمی اپل)",
-        "api_id": 2834,
-        "api_hash": "68875f756c9b437a8b916ca3de215815",
-        "device_model": "MacBook Pro",
-        "system_version": "macOS 14.4.1",
-        "app_version": "10.11",
-        "lang_code": "en",
-        "system_lang_code": "en"
-    },
-    "server": {
-        "title": "🤖 ورود با API پیش‌فرض سرور",
-        "device_model": "PC 64bit",
-        "system_version": "Windows 11",
-        "app_version": "5.4.1",
-        "lang_code": "en",
-        "system_lang_code": "en"
-    }
-}
+DEFAULT_DEVICE_MODEL = "PC 64bit"
+DEFAULT_SYSTEM_VERSION = "Windows 11"
+DEFAULT_APP_VERSION = "5.4.1"
+
+
+def format_otp_slots(code: str) -> str:
+    total_slots = max(5, len(code))
+    slots = []
+    for i in range(total_slots):
+        if i < len(code):
+            slots.append(code[i])
+        else:
+            slots.append("—")
+    joined = "   ".join(slots)
+    return f"\u200e[  {joined}  ]"
+
 
 def get_otp_numpad_buttons(current_code: str = ""):
     return [
@@ -694,84 +690,67 @@ async def start_bot_manager(main_config: dict):
             saved_api_id = u_info.get("api_id")
             saved_api_hash = u_info.get("api_hash")
 
-            login_buttons = [
-                [Button.inline("⚡ ورود سریع (Telegram macOS - بدون نیاز به API)", b"login_preset_macos")],
-                [Button.inline("🤖 ورود با API پیش‌فرض سرور", b"login_preset_server")],
-                [Button.inline("🔑 ورود با API ID و Hash اختصاصی", b"login_custom_creds")]
-            ]
-            if saved_api_id and saved_api_hash:
-                login_buttons.insert(0, [Button.inline("✅ ورود با اطلاعات API قبلی", b"use_saved_creds")])
-            login_buttons.append([Button.inline("🔙 بازگشت به منوی اصلی", b"btn_main_menu")])
-
-            menu_text = (
-                "🔐 **انتخاب روش ورود به سلف‌بات:**\n\n"
-                "جهت فعال‌سازی ربات روی اکانت خود، یکی از روش‌های زیر را انتخاب کنید:\n\n"
-                "• **⚡ ورود سریع (Telegram macOS):** بدون نیاز به ساخت API ID، سریع‌ترین و سازگارترین روش رسمی اپل.\n"
-                "• **🤖 ورود با API سرور:** استفاده از API پیش‌فرض تنظیم‌شده روی سرور.\n"
-                "• **🔑 ورود اختصاصی:** وارد کردن API ID و API Hash اختصاصی خودتان از my.telegram.org."
+            has_valid_saved_api = (
+                saved_api_id and saved_api_hash 
+                and saved_api_id != 2834 
+                and saved_api_hash != "68875f756c9b437a8b916ca3de215815"
             )
-            await ev.edit(menu_text, buttons=login_buttons)
-            return
 
-        elif data == "login_preset_macos":
-            await cleanup_user_login_state(user_id)
-            preset = TELEGRAM_PRESETS["macos"]
-            user_login_states[user_id] = {
-                "step": "ENTER_PHONE",
-                "api_id": preset["api_id"],
-                "api_hash": preset["api_hash"],
-                "device_model": preset["device_model"],
-                "system_version": preset["system_version"],
-                "app_version": preset["app_version"],
-                "lang_code": preset.get("lang_code", "en"),
-                "system_lang_code": preset.get("system_lang_code", "en"),
-                "created_at": time.time()
-            }
-            cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
-            await ev.edit(
-                "📱 **ورود سریع با Telegram macOS (رسمی اپل)**\n\n"
-                "لطفاً **شماره تلفن** حساب تلگرام خود را با کد کشور وارد کنید:\n"
-                "(مثال: `+989123456789`)\n\n"
-                "💡 نیازی به ساخت یا وارد کردن API ID ندارید.",
-                buttons=cancel_btn
-            )
-            return
-
-        elif data == "login_preset_server":
-            s_api_id = bot_cfg.get("bot_api_id")
-            s_api_hash = bot_cfg.get("bot_api_hash")
-            if not s_api_id or not s_api_hash:
-                await ev.answer("❌ API سرور پیکربندی نشده است.", alert=True)
+            if has_valid_saved_api:
+                login_buttons = [
+                    [Button.inline("✅ ورود با اطلاعات API قبلی شما", b"use_saved_creds")],
+                    [Button.inline("🔄 تغییر و ورود با API جدید", b"login_custom_creds")],
+                    [Button.inline("🔙 بازگشت به منوی اصلی", b"btn_main_menu")]
+                ]
+                menu_text = (
+                    "🔐 **ورود به سلف‌بات با API اختصاصی:**\n\n"
+                    f"اطلاعات API اختصاصی شما با API ID: `{saved_api_id}` در سیستم ثبت شده است.\n\n"
+                    "آیا مایلید با همین اطلاعات وارد شوید یا API جدید از my.telegram.org وارد نمایید؟"
+                )
+                await ev.edit(menu_text, buttons=login_buttons)
                 return
-            await cleanup_user_login_state(user_id)
-            preset = TELEGRAM_PRESETS["server"]
-            user_login_states[user_id] = {
-                "step": "ENTER_PHONE",
-                "api_id": s_api_id,
-                "api_hash": s_api_hash,
-                "device_model": preset["device_model"],
-                "system_version": preset["system_version"],
-                "app_version": preset["app_version"],
-                "lang_code": preset.get("lang_code", "en"),
-                "system_lang_code": preset.get("system_lang_code", "en"),
-                "created_at": time.time()
-            }
-            cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
-            await ev.edit(
-                "📱 **ورود با API سرور**\n\n"
-                "لطفاً **شماره تلفن** حساب تلگرام خود را با کد کشور وارد کنید:\n"
-                "(مثال: `+989123456789`)",
-                buttons=cancel_btn
-            )
-            return
+            else:
+                await cleanup_user_login_state(user_id)
+                user_login_states[user_id] = {
+                    "step": "ENTER_API_ID",
+                    "device_model": DEFAULT_DEVICE_MODEL,
+                    "system_version": DEFAULT_SYSTEM_VERSION,
+                    "app_version": DEFAULT_APP_VERSION,
+                    "lang_code": "en",
+                    "system_lang_code": "en",
+                    "created_at": time.time()
+                }
+                cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
+                await ev.edit(
+                    "🔑 **فعال‌سازی سلف‌بات با API اختصاصی (my.telegram.org)**\n\n"
+                    "جهت حفظ امنیت کامل اکانت شما و جلوگیری از محدودیت تلگرام، فعال‌سازی سلف‌بات **فقط با API ID و API Hash اختصاصی خودتان** انجام می‌شود.\n\n"
+                    "🌐 **راهنمای سریع دریافت API در کمتر از ۱ دقیقه:**\n"
+                    "۱. وارد سایت رسمی **my.telegram.org** شوید.\n"
+                    "۲. شماره تلگرام خود را با کد کشور وارد کرده و کد دریافتی در تلگرام را بزنید.\n"
+                    "۳. وارد بخش **API development tools** شوید.\n"
+                    "۴. دو فیلد اول (App title و Short name) را مقداری دلخواه (مثل `myselfbot`) پر کرده و تایید کنید.\n"
+                    "۵. دو مقدار `App api_id` و `App api_hash` به شما داده می‌شود.\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "👇 لطفاً اکنون **API ID** خود را ارسال کنید (مثال: `1234567`):",
+                    buttons=cancel_btn
+                )
+                return
 
         elif data == "login_custom_creds":
             await cleanup_user_login_state(user_id)
-            user_login_states[user_id] = {"step": "ENTER_API_ID", "created_at": time.time()}
+            user_login_states[user_id] = {
+                "step": "ENTER_API_ID",
+                "device_model": DEFAULT_DEVICE_MODEL,
+                "system_version": DEFAULT_SYSTEM_VERSION,
+                "app_version": DEFAULT_APP_VERSION,
+                "lang_code": "en",
+                "system_lang_code": "en",
+                "created_at": time.time()
+            }
             cancel_btn = [[Button.inline("❌ انصراف", b"cancel_login")]]
             await ev.edit(
-                "🔑 **ورود با API ID و Hash اختصاصی**\n\n"
-                "لطفاً **API ID** خود را از سایت my.telegram.org دریافت و وارد کنید (مثال: `1234567`):\n\n"
+                "🔑 **ورود با API ID و Hash جدید**\n\n"
+                "لطفاً **API ID** دریافت شده از سایت my.telegram.org را ارسال کنید (مثال: `1234567`):\n\n"
                 "(جهت انصراف، دکمه زیر یا دستور `/cancel` را لمس کنید)",
                 buttons=cancel_btn
             )
@@ -783,14 +762,17 @@ async def start_bot_manager(main_config: dict):
             u_info = bot_dt["users"].get(uid_str, {})
             api_id = u_info.get("api_id")
             api_hash = u_info.get("api_hash")
+            if not api_id or not api_hash or api_id == 2834:
+                await ev.answer("❌ اطلاعات API معتبری یافت نشد. لطفاً API جدید وارد کنید.", alert=True)
+                return
             
             user_login_states[user_id] = {
                 "step": "ENTER_PHONE",
                 "api_id": api_id,
                 "api_hash": api_hash,
-                "device_model": u_info.get("device_model", "MacBook Pro"),
-                "system_version": u_info.get("system_version", "macOS 14.4.1"),
-                "app_version": u_info.get("app_version", "10.11"),
+                "device_model": u_info.get("device_model", DEFAULT_DEVICE_MODEL),
+                "system_version": u_info.get("system_version", DEFAULT_SYSTEM_VERSION),
+                "app_version": u_info.get("app_version", DEFAULT_APP_VERSION),
                 "lang_code": u_info.get("lang_code", "en"),
                 "system_lang_code": u_info.get("system_lang_code", "en"),
                 "created_at": time.time()
@@ -827,16 +809,17 @@ async def start_bot_manager(main_config: dict):
                     current_otp += action
 
             state["entered_otp"] = current_otp
-            masked_code = "  ".join(list(current_otp)) if current_otp else "— — — — —"
+            formatted_display = format_otp_slots(current_otp)
 
             otp_ui_text = (
-                f"📩 **کد تایید ارسال شده به تلگرام را وارد کنید:**\n\n"
-                f"🔢 **کد وارد شده:** `{masked_code}`\n\n"
-                f"🛡️ **روش‌های ورود امن (ضد باطل شدن کد توسط تلگرام):**\n"
-                f"۱. **کیبورد شیشه‌ای (کاملاً ایمن):** ارقام کد را با دکمه‌های زیر لمس کرده و «✅ تایید و ورود» را بزنید.\n"
-                f"۲. **ارسال با اعداد فارسی:** ارسال در چت با اعداد فارسی (مثال: `۱۲۳۴۵`)\n"
-                f"۳. **ارسال با فاصله:** بین ارقام فاصله بگذارید (مثال: `1 2 3 4 5` یا `1-2-3-4-5`)\n\n"
-                f"⚠️ **مهم:** از کپی و پیست مستقیم کد انگلیسی بدون فاصله خودداری کنید."
+                "📩 **کد تایید ارسال شده به تلگرام را وارد کنید:**\n\n"
+                "🔢 **کد وارد شده (چپ به راست):**\n"
+                f"```{formatted_display}```\n\n"
+                "🛡️ **روش‌های ورود امن (ضد باطل شدن کد توسط تلگرام):**\n"
+                "۱. **کیبورد شیشه‌ای (کاملاً ایمن):** ارقام کد را با دکمه‌های زیر لمس کرده و «✅ تایید و ورود» را بزنید.\n"
+                "۲. **ارسال با اعداد فارسی:** ارسال در چت با اعداد فارسی (مثال: `۱۲۳۴۵`)\n"
+                "۳. **ارسال با فاصله:** بین ارقام فاصله بگذارید (مثال: `1 2 3 4 5` یا `1-2-3-4-5`)\n\n"
+                "⚠️ **مهم:** از کپی و پیست مستقیم کد انگلیسی بدون فاصله خودداری کنید."
             )
             try:
                 await ev.edit(otp_ui_text, buttons=get_otp_numpad_buttons(current_otp))
@@ -1089,14 +1072,24 @@ async def start_bot_manager(main_config: dict):
             if step == "ENTER_API_ID":
                 try:
                     api_id = int(text)
+                    if api_id == 2834:
+                        await ev.respond("❌ لطفاً از API ID عمومی پیش‌فرض استفاده نکنید. باید API ID اختصاصی حساب خودتان از سایت my.telegram.org باشد:", buttons=cancel_btn)
+                        return
                     state["api_id"] = api_id
                     state["step"] = "ENTER_API_HASH"
-                    await ev.respond("🔑 عالی! حالا **API Hash** حساب تلگرام خود را وارد کنید:", buttons=cancel_btn)
+                    await ev.respond("🔑 عالی! حالا **API Hash** حساب تلگرام خود را از سایت my.telegram.org وارد کنید:\n(مثال: `0123456789abcdef0123456789abcdef`)", buttons=cancel_btn)
                 except ValueError:
-                    await ev.respond("❌ API ID باید فقط عدد باشد. لطفاً مجدداً وارد کنید:", buttons=cancel_btn)
+                    await ev.respond("❌ API ID باید فقط عدد باشد (مثال: `1234567`). لطفاً مجدداً وارد کنید:", buttons=cancel_btn)
 
             elif step == "ENTER_API_HASH":
-                state["api_hash"] = text
+                clean_hash = text.strip()
+                if clean_hash.lower() == "68875f756c9b437a8b916ca3de215815":
+                    await ev.respond("❌ لطفاً از API Hash عمومی استفاده نکنید. باید API Hash اختصاصی حساب خودتان از سایت my.telegram.org باشد:", buttons=cancel_btn)
+                    return
+                if len(clean_hash) < 16:
+                    await ev.respond("❌ رشته API Hash نامعتبر یا خیلی کوتاه است. لطفاً رشته کامل را ارسال کنید:", buttons=cancel_btn)
+                    return
+                state["api_hash"] = clean_hash
                 state["step"] = "ENTER_PHONE"
                 await ev.respond("📱 لطفاً **شماره تلفن** حساب تلگرام خود را با کد کشور وارد کنید (مثال: `+989123456789`):", buttons=cancel_btn)
 
@@ -1113,9 +1106,9 @@ async def start_bot_manager(main_config: dict):
                 state["phone"] = phone
                 api_id = state["api_id"]
                 api_hash = state["api_hash"]
-                device_model = state.get("device_model", "MacBook Pro")
-                system_version = state.get("system_version", "macOS 14.4.1")
-                app_version = state.get("app_version", "10.11")
+                device_model = state.get("device_model", DEFAULT_DEVICE_MODEL)
+                system_version = state.get("system_version", DEFAULT_SYSTEM_VERSION)
+                app_version = state.get("app_version", DEFAULT_APP_VERSION)
                 lang_code = state.get("lang_code", "en")
                 system_lang_code = state.get("system_lang_code", "en")
 
@@ -1145,9 +1138,11 @@ async def start_bot_manager(main_config: dict):
                     state["step"] = "ENTER_OTP"
                     state["entered_otp"] = ""
                     
+                    formatted_display = format_otp_slots("")
                     otp_msg_text = (
                         "📩 **کد تایید ورود به تلگرام شما ارسال شد!**\n\n"
-                        "🔢 **کد وارد شده:** `— — — — —`\n\n"
+                        "🔢 **کد وارد شده (چپ به راست):**\n"
+                        f"```{formatted_display}```\n\n"
                         "🛡️ **روش‌های ورود امن (ضد باطل شدن کد توسط تلگرام):**\n"
                         "۱. **کیبورد شیشه‌ای (پیشنهادی و کاملاً ایمن):** ارقام کد را با دکمه‌های زیر لمس کرده و دکمه «✅ تایید و ورود» را بزنید.\n"
                         "۲. **ارسال با اعداد فارسی:** کد را با اعداد فارسی بفرستید (مثال: `۱۲۳۴۵`)\n"
@@ -1188,9 +1183,9 @@ async def start_bot_manager(main_config: dict):
                 phone = state.get("phone", "")
                 api_id = state["api_id"]
                 api_hash = state["api_hash"]
-                device_model = state.get("device_model", "MacBook Pro")
-                system_version = state.get("system_version", "macOS 14.4.1")
-                app_version = state.get("app_version", "10.11")
+                device_model = state.get("device_model", DEFAULT_DEVICE_MODEL)
+                system_version = state.get("system_version", DEFAULT_SYSTEM_VERSION)
+                app_version = state.get("app_version", DEFAULT_APP_VERSION)
                 lang_code = state.get("lang_code", "en")
                 system_lang_code = state.get("system_lang_code", "en")
 

@@ -27,15 +27,13 @@ do_multisession_config() {
     echo -e "${CYAN}${BOLD}🤖 Multi-Session & Bot Configuration${NC}"
     read -p "▸ Bot Token (from @BotFather): " bot_token
     read -p "▸ Admin Telegram User ID: " admin_id
-    read -p "▸ Bot API ID [Press Enter for default Telegram API: 2834]: " bot_api_id
-    bot_api_id=${bot_api_id:-2834}
-    read -p "▸ Bot API HASH [Press Enter for default Telegram API]: " bot_api_hash
-    bot_api_hash=${bot_api_hash:-"68875f756c9b437a8b916ca3de215815"}
+    read -p "▸ Bot API ID (from my.telegram.org): " bot_api_id
+    read -p "▸ Bot API HASH (from my.telegram.org): " bot_api_hash
     read -p "▸ Card Number for Payments (default: 6037997000000000): " card_num
     card_num=${card_num:-"6037997000000000"}
 
-    if [ -z "$bot_token" ] || [ -z "$admin_id" ]; then
-        echo -e "${RED}❌ Bot token and Admin ID cannot be empty!${NC}"
+    if [ -z "$bot_token" ] || [ -z "$admin_id" ] || [ -z "$bot_api_id" ] || [ -z "$bot_api_hash" ]; then
+        echo -e "${RED}❌ Bot token, Admin ID, API ID and API HASH cannot be empty!${NC}"
         return 1
     fi
 
