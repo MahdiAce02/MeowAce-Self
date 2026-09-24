@@ -67,7 +67,7 @@ def parse_fish_cooldown(txt: str):
         return m_num * 60 + s_num
     return 300
 
-async def schedule_next_fish(client, cid: int, remaining_cd: int, target_count: int = 1):
+async def schedule_next_fish(client, cid: int, remaining_cd: int):
     uid = getattr(client, 'uid', None) or (await client.get_me()).id
     
     try:
@@ -85,7 +85,7 @@ async def schedule_next_fish(client, cid: int, remaining_cd: int, target_count: 
                 
     now_ts = time.time()
     
-    # If cooldown active, clean up any scheduled fish messages set before cooldown expires
+    # Clean up any scheduled fish messages set before remaining cooldown expires
     if remaining_cd > 10 and fish_sched:
         invalid_ids = [m.id for m in fish_sched if m.date.timestamp() < (now_ts + remaining_cd)]
         if invalid_ids:
@@ -95,48 +95,36 @@ async def schedule_next_fish(client, cid: int, remaining_cd: int, target_count: 
             except Exception as del_err:
                 print(f"[AutoFish] Error deleting invalid scheduled messages in {cid}: {del_err}")
 
-    existing_count = len(fish_sched)
-    needed = target_count - existing_count
-    if needed <= 0:
+    # If there is already a valid scheduled fish message, we don't need to add another
+    if fish_sched:
         return
 
-    main_cd = 300  # 5 minutes fishing cycle
-    if existing_count == 0:
-        buf = random.randint(3, 8) if remaining_cd > 10 else 2
-        next_ts = now_ts + remaining_cd + buf
-    else:
-        max_existing_ts = max(m.date.timestamp() for m in fish_sched)
-        buf = random.randint(3, 8)
-        next_ts = max(max_existing_ts + main_cd + buf, now_ts + remaining_cd + buf)
-
-    for i in range(needed):
+    buf = random.randint(3, 8) if remaining_cd > 10 else 2
+    next_ts = now_ts + remaining_cd + buf
+    target_dt = datetime.datetime.fromtimestamp(next_ts, tz=datetime.timezone.utc)
+    
+    try:
         word = random.choice(fish_words)
-        target_dt = datetime.datetime.fromtimestamp(next_ts, tz=datetime.timezone.utc)
-        try:
-            await client.send_message(cid, word, schedule=target_dt)
-            print(f"[AutoFish] Scheduled fish #{existing_count + i + 1} for chat {cid} at {target_dt}")
-        except Exception as e:
-            print(f"[!] AutoFish schedule send error in {cid}: {e}")
-            break
-            
-        buf = random.randint(3, 8)
-        next_ts += main_cd + buf
+        await client.send_message(cid, word, schedule=target_dt)
+        print(f"[AutoFish] Scheduled next fish for chat {cid} at {target_dt}")
+    except Exception as e:
+        print(f"[!] AutoFish schedule send error in {cid}: {e}")
 
-async def start_autofish_schedule(client, chat_id: int, target_count: int = 1):
+async def start_autofish_schedule(client, chat_id: int):
     uid = getattr(client, 'uid', None) or (await client.get_me()).id
     
     try:
         msgs = await client.get_messages(chat_id, scheduled=True)
         fish_sched = [m for m in msgs if m.text and any(w in m.text for w in ["ماهی", "ماهیگیری"])]
-        if len(fish_sched) >= target_count:
-            print(f"[AutoFish] Schedule queue already has {len(fish_sched)} messages for chat {chat_id}")
+        if fish_sched:
+            print(f"[AutoFish] A scheduled fish message is already waiting in chat {chat_id}")
             return
     except Exception:
         pass
 
     # Schedule the initial fish message for 4 seconds in the future
     # Telegram sends it as a scheduled message so the account does NOT become online!
-    await schedule_next_fish(client, chat_id, remaining_cd=4, target_count=target_count)
+    await schedule_next_fish(client, chat_id, remaining_cd=4)
 
 async def _handle_fish_schedule_response(client, chat_id: int, uid: int, init_msg, cfg_mode: dict):
     lk = get_chat_lock(uid, chat_id)
@@ -214,10 +202,10 @@ async def _handle_fish_schedule_response(client, chat_id: int, uid: int, init_ms
                         client.remove_event_handler(_on_fridge_edit, events.MessageEdited)
 
             # Successfully fished! Next scheduled fish in 300 seconds
-            await schedule_next_fish(client, chat_id, remaining_cd=300, target_count=target_count)
+            await schedule_next_fish(client, chat_id, remaining_cd=300)
         else:
             # Fallback if no buttons appeared
-            await schedule_next_fish(client, chat_id, remaining_cd=60, target_count=target_count)
+            await schedule_next_fish(client, chat_id, remaining_cd=60)
 
 async def process_fish_schedule_event(ev):
     client = ev.client
@@ -242,7 +230,7 @@ async def process_fish_schedule_event(ev):
     txt = ev.text or ""
     cd_val = parse_fish_cooldown(txt)
     if cd_val is not None:
-        await schedule_next_fish(client, cid, remaining_cd=cd_val, target_count=cfg_mode.get("count", 1))
+        await schedule_next_fish(client, cid, remaining_cd=cd_val)
         return
 
     asyncio.create_task(_handle_fish_schedule_response(client, cid, uid, ev.message, cfg_mode))
@@ -409,7 +397,7 @@ async def resume_autofish_tasks(client):
                 msgs = await client.get_messages(cid, scheduled=True)
                 fish_sched = [m for m in msgs if m.text and any(w in m.text for w in ["ماهی", "ماهیگیری"])]
                 if not fish_sched:
-                    asyncio.create_task(start_autofish_schedule(client, cid, target_count=m_info.get("count", 1)))
+                    asyncio.create_task(start_autofish_schedule(client, cid))
             except Exception as e:
                 print(f"[!] error resuming fish schedule in {cid}: {e}")
 
@@ -430,7 +418,7 @@ async def autofish_command(ev):
             if cur_info.get("type") == "instant":
                 st_label = f"<code>لحظه‌ای ⚡ ({cur_info.get('action')})</code>"
             else:
-                st_label = f"<code>زماندار سرور 📅 ({cur_info.get('action')} - {cur_info.get('count', 1)} پیام)</code>"
+                st_label = f"<code>زماندار سرور 📅 ({cur_info.get('action')})</code>"
         else:
             st_label = "<code>غیرفعال 🔴</code>"
             
@@ -439,12 +427,12 @@ async def autofish_command(ev):
             f"🎣 <b>ربات ماهیگیری خودکار (AutoFish)</b>\n\n"
             f"▸ وضعیت در این چت: {st_label}\n\n"
             f"💡 <b>راهنمای استفاده:</b>\n"
-            f"▸ <code>/autofish feed instant</code> ── ماهیگیری لحظه‌ای و غذادادن به پیشی\n"
-            f"▸ <code>/autofish sell instant</code> ── ماهیگیری لحظه‌ای و فروش مستقیم ماهی\n"
-            f"▸ <code>/autofish fridge instant</code> ── ماهیگیری لحظه‌ای و قرار دادن در یخچال\n"
-            f"▸ <code>/autofish [feed|sell|fridge] schedule [تعداد]</code> ── زمانبندی سرور تلگرام (عدم آنلاین شدن اکانت 🛡️)\n"
+            f"▸ <code>/autofish feed schedule</code> ── ماهیگیری زماندار سرور و غذادادن به پیشی (عدم آنلاین شدن 🛡️)\n"
+            f"▸ <code>/autofish sell schedule</code> ── ماهیگیری زماندار سرور و فروش مستقیم (عدم آنلاین شدن 🛡️)\n"
+            f"▸ <code>/autofish fridge schedule</code> ── ماهیگیری زماندار سرور و قرار دادن در یخچال (عدم آنلاین شدن 🛡️)\n"
+            f"▸ <code>/autofish [feed|sell|fridge] instant</code> ── حالت لحظه‌ای زنده ⚡\n"
             f"▸ <code>/autofish off</code> ── غیرفعال‌سازی در این چت\n\n"
-            f"ℹ️ <i>مثال زماندار: <code>/autofish feed schedule 5</code></i>",
+            f"ℹ️ <i>در حالت schedule پیام‌ها تک‌به‌تک روی سرور تلگرام زمانبندی شده و اکانت شما آنلاین نمی‌شود.</i>",
             parse_mode='html'
         )
         return
@@ -452,7 +440,6 @@ async def autofish_command(ev):
     # Flexible argument parsing
     action = None
     mode_type = None
-    count = 1
     is_off = False
     
     for tok in parts[1:]:
@@ -469,8 +456,6 @@ async def autofish_command(ev):
             mode_type = "instant"
         elif t in ["schedule", "sched"]:
             mode_type = "schedule"
-        elif t.isdigit():
-            count = max(1, min(100, int(t)))
             
     if is_off:
         set_chat_fish_mode(me_id, str_cid, "feed", "off")
@@ -481,7 +466,7 @@ async def autofish_command(ev):
     if not action:
         action = cur_info.get("action", "feed") if cur_info.get("active") else "feed"
     if not mode_type:
-        mode_type = "instant" if count == 1 and "schedule" not in (ev.raw_text or "").lower() else "schedule"
+        mode_type = "schedule" if "sched" in (ev.raw_text or "").lower() else ("instant" if "instant" in (ev.raw_text or "").lower() else "instant")
         
     action_labels = {
         "feed": "غذادادن به پیشی 🐱",
@@ -490,7 +475,7 @@ async def autofish_command(ev):
     }
     a_label = action_labels.get(action, action)
     
-    set_chat_fish_mode(me_id, str_cid, action, mode_type, count)
+    set_chat_fish_mode(me_id, str_cid, action, mode_type, 1)
     await stop_autofish(client, cid, clear_scheduled=True)
     
     if mode_type == "instant":
@@ -505,9 +490,9 @@ async def autofish_command(ev):
     else:
         await safe_edit_or_silent(
             ev,
-            f"🎣 <b>ماهیگیری خودکار (حالت زماندار سرور 📅 - {count} پیام) فعال شد!</b>\n"
+            f"🎣 <b>ماهیگیری خودکار (حالت زماندار سرور 📅) فعال شد!</b>\n"
             f"▸ نوع عملکرد: <code>{a_label}</code>\n"
-            f"🛡️ <i>پیام‌ها روی سرور تلگرام زمانبندی شدند (اکانت شما آنلاین نخواهد شد).</i>",
+            f"🛡️ <i>پیام‌ها به صورت زماندار روی سرور ارسال می‌شوند و اکانت شما آنلاین نخواهد شد.</i>",
             parse_mode='html'
         )
-        asyncio.create_task(start_autofish_schedule(client, cid, target_count=count))
+        asyncio.create_task(start_autofish_schedule(client, cid))

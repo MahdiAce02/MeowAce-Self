@@ -48,7 +48,7 @@ def set_chat_fridge_mode(u_id: int, cid_str: str, action: str, m_type: str, coun
         cfg.pop(cid_str, None)
     save_fridge_cfg(u_id, cfg)
 
-async def schedule_next_fridge(client, cid: int, remaining_cd: int, target_count: int = 1):
+async def schedule_next_fridge(client, cid: int, remaining_cd: int):
     uid = getattr(client, 'uid', None) or (await client.get_me()).id
     
     try:
@@ -66,7 +66,7 @@ async def schedule_next_fridge(client, cid: int, remaining_cd: int, target_count
 
     now_ts = time.time()
     
-    # If cooldown active, clean up any scheduled fridge messages set before cooldown expires
+    # Clean up any scheduled fridge messages set before cooldown expires
     if remaining_cd > 10 and fridge_sched:
         invalid_ids = [m.id for m in fridge_sched if m.date.timestamp() < (now_ts + remaining_cd)]
         if invalid_ids:
@@ -76,47 +76,35 @@ async def schedule_next_fridge(client, cid: int, remaining_cd: int, target_count
             except Exception as del_err:
                 print(f"[AutoFridge] Error deleting invalid scheduled messages in {cid}: {del_err}")
 
-    existing_count = len(fridge_sched)
-    needed = target_count - existing_count
-    if needed <= 0:
+    # If there is already a valid scheduled fridge message, we don't need to add another
+    if fridge_sched:
         return
 
-    main_cd = 1800  # 30 mins cycle
-    if existing_count == 0:
-        buf = random.randint(3, 8) if remaining_cd > 10 else 2
-        next_ts = now_ts + remaining_cd + buf
-    else:
-        max_existing_ts = max(m.date.timestamp() for m in fridge_sched)
-        buf = random.randint(3, 8)
-        next_ts = max(max_existing_ts + main_cd + buf, now_ts + remaining_cd + buf)
+    buf = random.randint(3, 8) if remaining_cd > 10 else 2
+    next_ts = now_ts + remaining_cd + buf
+    target_dt = datetime.datetime.fromtimestamp(next_ts, tz=datetime.timezone.utc)
+    
+    try:
+        await client.send_message(cid, "یخچال میویی", schedule=target_dt)
+        print(f"[AutoFridge] Scheduled next fridge check for chat {cid} at {target_dt}")
+    except Exception as e:
+        print(f"[!] AutoFridge schedule send error in {cid}: {e}")
 
-    for i in range(needed):
-        target_dt = datetime.datetime.fromtimestamp(next_ts, tz=datetime.timezone.utc)
-        try:
-            await client.send_message(cid, "یخچال میویی", schedule=target_dt)
-            print(f"[AutoFridge] Scheduled fridge #{existing_count + i + 1} for chat {cid} at {target_dt}")
-        except Exception as e:
-            print(f"[!] AutoFridge schedule send error in {cid}: {e}")
-            break
-            
-        buf = random.randint(3, 8)
-        next_ts += main_cd + buf
-
-async def start_autofridge_schedule(client, chat_id: int, target_count: int = 1):
+async def start_autofridge_schedule(client, chat_id: int):
     uid = getattr(client, 'uid', None) or (await client.get_me()).id
     
     try:
         msgs = await client.get_messages(chat_id, scheduled=True)
         fridge_sched = [m for m in msgs if m.text and any(w in m.text for w in ["یخچال میویی", "یخچال"])]
-        if len(fridge_sched) >= target_count:
-            print(f"[AutoFridge] Schedule queue already has {len(fridge_sched)} messages for chat {chat_id}")
+        if fridge_sched:
+            print(f"[AutoFridge] A scheduled fridge message is already waiting in chat {chat_id}")
             return
     except Exception:
         pass
 
     # Schedule the initial fridge inspection for 4 seconds in the future
     # Telegram sends it as a scheduled message so the account does NOT become online!
-    await schedule_next_fridge(client, chat_id, remaining_cd=4, target_count=target_count)
+    await schedule_next_fridge(client, chat_id, remaining_cd=4)
 
 async def _handle_fridge_schedule_response(client, chat_id: int, uid: int, fridge_msg, cfg_mode: dict):
     lk = get_chat_lock(uid, chat_id)
@@ -270,7 +258,7 @@ async def _handle_fridge_schedule_response(client, chat_id: int, uid: int, fridg
             finally:
                 client.remove_event_handler(_on_fish_edit, events.MessageEdited)
 
-        await schedule_next_fridge(client, chat_id, remaining_cd=sleep_dur, target_count=target_count)
+        await schedule_next_fridge(client, chat_id, remaining_cd=sleep_dur)
 
 async def process_fridge_schedule_event(ev):
     client = ev.client
@@ -515,7 +503,7 @@ async def resume_autofridge_tasks(client):
                 msgs = await client.get_messages(cid, scheduled=True)
                 fridge_sched = [m for m in msgs if m.text and any(w in m.text for w in ["یخچال میویی", "یخچال"])]
                 if not fridge_sched:
-                    asyncio.create_task(start_autofridge_schedule(client, cid, target_count=m_info.get("count", 1)))
+                    asyncio.create_task(start_autofridge_schedule(client, cid))
             except Exception as e:
                 print(f"[!] error resuming fridge schedule in {cid}: {e}")
 
@@ -536,7 +524,7 @@ async def autofridge_command(ev):
             if cur_info.get("type") == "instant":
                 st_label = f"<code>لحظه‌ای ⚡ ({cur_info.get('action')})</code>"
             else:
-                st_label = f"<code>زماندار سرور 📅 ({cur_info.get('action')} - {cur_info.get('count', 1)} پیام)</code>"
+                st_label = f"<code>زماندار سرور 📅 ({cur_info.get('action')})</code>"
         else:
             st_label = "<code>غیرفعال 🔴</code>"
             
@@ -545,11 +533,11 @@ async def autofridge_command(ev):
             f"🧊 <b>مدیریت خودکار یخچال میویی (AutoFridge)</b>\n\n"
             f"▸ وضعیت در این چت: {st_label}\n\n"
             f"💡 <b>راهنمای استفاده:</b>\n"
-            f"▸ <code>/autofridge sell instant</code> ── پختن ماهی‌های خام و فروش ماهی‌های پخته (لحظه‌ای)\n"
-            f"▸ <code>/autofridge feed instant</code> ── پختن ماهی‌های خام و غذادادن به پیشی (لحظه‌ای)\n"
-            f"▸ <code>/autofridge [sell|feed] schedule [تعداد]</code> ── زمانبندی سرور تلگرام (عدم آنلاین شدن اکانت 🛡️)\n"
+            f"▸ <code>/autofridge sell schedule</code> ── پخت و فروش زماندار سرور (عدم آنلاین شدن 🛡️)\n"
+            f"▸ <code>/autofridge feed schedule</code> ── پخت و غذادادن زماندار سرور (عدم آنلاین شدن 🛡️)\n"
+            f"▸ <code>/autofridge [sell|feed] instant</code> ── حالت لحظه‌ای زنده ⚡\n"
             f"▸ <code>/autofridge off</code> ── غیرفعال‌سازی در این چت\n\n"
-            f"ℹ️ <i>مثال زماندار: <code>/autofridge sell schedule 3</code></i>",
+            f"ℹ️ <i>در حالت schedule پیام‌ها تک‌به‌تک و بر اساس زمان پخت روی سرور تلگرام زمانبندی می‌شوند.</i>",
             parse_mode='html'
         )
         return
@@ -557,7 +545,6 @@ async def autofridge_command(ev):
     # Flexible argument parsing
     action = None
     mode_type = None
-    count = 1
     is_off = False
     
     for tok in parts[1:]:
@@ -572,8 +559,6 @@ async def autofridge_command(ev):
             mode_type = "instant"
         elif t in ["schedule", "sched"]:
             mode_type = "schedule"
-        elif t.isdigit():
-            count = max(1, min(100, int(t)))
             
     if is_off:
         set_chat_fridge_mode(me_id, str_cid, "sell", "off")
@@ -584,7 +569,7 @@ async def autofridge_command(ev):
     if not action:
         action = cur_info.get("action", "sell") if cur_info.get("active") else "sell"
     if not mode_type:
-        mode_type = "instant" if count == 1 and "schedule" not in (ev.raw_text or "").lower() else "schedule"
+        mode_type = "schedule" if "sched" in (ev.raw_text or "").lower() else ("instant" if "instant" in (ev.raw_text or "").lower() else "instant")
         
     action_labels = {
         "sell": "پخت ماهی خام و فروش پخته‌ها 💰",
@@ -592,7 +577,7 @@ async def autofridge_command(ev):
     }
     a_label = action_labels.get(action, action)
     
-    set_chat_fridge_mode(me_id, str_cid, action, mode_type, count)
+    set_chat_fridge_mode(me_id, str_cid, action, mode_type, 1)
     await stop_autofridge(client, cid, clear_scheduled=True)
     
     if mode_type == "instant":
@@ -607,9 +592,9 @@ async def autofridge_command(ev):
     else:
         await safe_edit_or_silent(
             ev,
-            f"🧊 <b>مدیریت خودکار یخچال (حالت زماندار سرور 📅 - {count} پیام) فعال شد!</b>\n"
+            f"🧊 <b>مدیریت خودکار یخچال (حالت زماندار سرور 📅) فعال شد!</b>\n"
             f"▸ نوع عملکرد: <code>{a_label}</code>\n"
-            f"🛡️ <i>پیام‌ها روی سرور تلگرام زمانبندی شدند (اکانت شما آنلاین نخواهد شد).</i>",
+            f"🛡️ <i>پیام‌ها به صورت زماندار روی سرور ارسال می‌شوند و اکانت شما آنلاین نخواهد شد.</i>",
             parse_mode='html'
         )
-        asyncio.create_task(start_autofridge_schedule(client, cid, target_count=count))
+        asyncio.create_task(start_autofridge_schedule(client, cid))

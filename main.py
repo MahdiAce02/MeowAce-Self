@@ -92,11 +92,10 @@ async def status_command(ev):
     if f_info.get("active"):
         f_type = f_info.get("type")
         f_act = f_info.get("action")
-        f_cnt = f_info.get("count", 1)
         if f_type == "instant":
             fish_st = f"🟢 فعال (لحظه‌ای ⚡ - {f_act})"
         else:
-            fish_st = f"🟢 فعال (زماندار سرور 📅 - {f_act}, {f_cnt} پیام)"
+            fish_st = f"🟢 فعال (زماندار سرور 📅 - {f_act})"
     else:
         fish_st = "🔴 غیرفعال"
     
@@ -104,11 +103,10 @@ async def status_command(ev):
     if fr_info.get("active"):
         fr_type = fr_info.get("type")
         fr_act = fr_info.get("action")
-        fr_cnt = fr_info.get("count", 1)
         if fr_type == "instant":
             fridge_st = f"🟢 فعال (لحظه‌ای ⚡ - {fr_act})"
         else:
-            fridge_st = f"🟢 فعال (زماندار سرور 📅 - {fr_act}, {fr_cnt} پیام)"
+            fridge_st = f"🟢 فعال (زماندار سرور 📅 - {fr_act})"
     else:
         fridge_st = "🔴 غیرفعال"
     
