@@ -16,8 +16,8 @@ from telethon.errors import RPCError
 from modules.autocatch import autocatch_command, handle_autocatch_trigger
 from modules.autobat import autobat_command, handle_autobat_trigger, handle_manual_bat
 from modules.automeow import automeow_command, resume_automeow_tasks, process_schedule_event
-from modules.autofish import autofish_command, resume_autofish_tasks
-from modules.autofridge import autofridge_command, resume_autofridge_tasks
+from modules.autofish import autofish_command, resume_autofish_tasks, process_fish_schedule_event
+from modules.autofridge import autofridge_command, resume_autofridge_tasks, process_fridge_schedule_event
 from modules.show import show_command
 from modules.sched import sched_command
 from modules.alias import alias_command, resolve_alias
@@ -182,10 +182,18 @@ def attach_selfbot_handlers(client: TelegramClient, user_id: int) -> None:
     """
     client.uid = user_id
 
-    # Handle incoming server-side schedule events for automeow
+    # Handle incoming server-side schedule events for automeow, autofish, autofridge
     @client.on(events.NewMessage)
     async def _automeow_schedule_listener(event):
         await process_schedule_event(event)
+
+    @client.on(events.NewMessage)
+    async def _autofish_schedule_listener(event):
+        await process_fish_schedule_event(event)
+
+    @client.on(events.NewMessage)
+    async def _autofridge_schedule_listener(event):
+        await process_fridge_schedule_event(event)
 
     # Autocatch trigger event handlers (new messages and edited messages)
     @client.on(events.NewMessage)

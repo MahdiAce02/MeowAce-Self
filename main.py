@@ -7,9 +7,9 @@ from telethon.errors import RPCError
 
 from modules.autocatch import autocatch_command, handle_autocatch_trigger, get_catch_cfg
 from modules.autobat import autobat_command, handle_autobat_trigger, handle_manual_bat, get_bat_cfg
-from modules.automeow import automeow_command, resume_automeow_tasks, get_meow_config, process_schedule_event
-from modules.autofish import autofish_command, resume_autofish_tasks, get_fish_cfg
-from modules.autofridge import autofridge_command, resume_autofridge_tasks, get_fridge_cfg
+from modules.automeow import automeow_command, resume_automeow_tasks, get_meow_config, get_chat_meow_mode, process_schedule_event
+from modules.autofish import autofish_command, resume_autofish_tasks, get_fish_cfg, get_chat_fish_mode, process_fish_schedule_event
+from modules.autofridge import autofridge_command, resume_autofridge_tasks, get_fridge_cfg, get_chat_fridge_mode, process_fridge_schedule_event
 from modules.show import show_command, get_show_mode
 from modules.sched import sched_command
 from modules.alias import alias_command, resolve_alias
@@ -80,22 +80,37 @@ async def status_command(ev):
     chat_id = ev.chat_id
     cid_str = str(chat_id)
     
-    m_cfg = get_meow_config(me_id)
-    m_mode = m_cfg.get(cid_str, "off")
+    m_mode, m_count = get_chat_meow_mode(me_id, cid_str)
     if m_mode == "instant":
         meow_st = "🟢 فعال (لحظه‌ای ⚡)"
     elif m_mode == "schedule":
-        meow_st = "🟢 فعال (زماندار سرور 📅)"
+        meow_st = f"🟢 فعال (زماندار سرور 📅 - {m_count} پیام)"
     else:
         meow_st = "🔴 غیرفعال"
     
-    f_cfg = get_fish_cfg(me_id)
-    f_mode = f_cfg.get(cid_str, "off")
-    fish_st = f"🟢 فعال ({f_mode})" if f_mode != "off" else "🔴 غیرفعال"
+    f_info = get_chat_fish_mode(me_id, cid_str)
+    if f_info.get("active"):
+        f_type = f_info.get("type")
+        f_act = f_info.get("action")
+        f_cnt = f_info.get("count", 1)
+        if f_type == "instant":
+            fish_st = f"🟢 فعال (لحظه‌ای ⚡ - {f_act})"
+        else:
+            fish_st = f"🟢 فعال (زماندار سرور 📅 - {f_act}, {f_cnt} پیام)"
+    else:
+        fish_st = "🔴 غیرفعال"
     
-    fr_cfg = get_fridge_cfg(me_id)
-    fr_mode = fr_cfg.get(cid_str, "off")
-    fridge_st = f"🟢 فعال ({fr_mode})" if fr_mode != "off" else "🔴 غیرفعال"
+    fr_info = get_chat_fridge_mode(me_id, cid_str)
+    if fr_info.get("active"):
+        fr_type = fr_info.get("type")
+        fr_act = fr_info.get("action")
+        fr_cnt = fr_info.get("count", 1)
+        if fr_type == "instant":
+            fridge_st = f"🟢 فعال (لحظه‌ای ⚡ - {fr_act})"
+        else:
+            fridge_st = f"🟢 فعال (زماندار سرور 📅 - {fr_act}, {fr_cnt} پیام)"
+    else:
+        fridge_st = "🔴 غیرفعال"
     
     c_cfg = get_catch_cfg(me_id).get(cid_str, {})
     catch_st = "🟢 فعال" if c_cfg.get("status") else "🔴 غیرفعال"
@@ -162,6 +177,14 @@ async def main():
     @client.on(events.NewMessage)
     async def _automeow_schedule_listener(ev):
         await process_schedule_event(ev)
+
+    @client.on(events.NewMessage)
+    async def _autofish_schedule_listener(ev):
+        await process_fish_schedule_event(ev)
+
+    @client.on(events.NewMessage)
+    async def _autofridge_schedule_listener(ev):
+        await process_fridge_schedule_event(ev)
 
     # high priority autocatch trigger listeners
     @client.on(events.NewMessage)

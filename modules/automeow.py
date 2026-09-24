@@ -229,11 +229,20 @@ async def start_automeow_schedule(client, chat_id: int, target_count: int = 1):
         finally:
             client.remove_event_handler(_reply_cb, events.NewMessage)
 
-async def stop_automeow(client, chat_id: int):
+async def stop_automeow(client, chat_id: int, clear_scheduled: bool = False):
     uid = getattr(client, 'uid', None) or (await client.get_me()).id
     t = active_meow_loops.pop((uid, chat_id), None)
     if t:
         t.cancel()
+    if clear_scheduled:
+        try:
+            msgs = await client.get_messages(chat_id, scheduled=True)
+            words = ["مع", "میو", "میو میو", "معو"]
+            meow_msgs = [m.id for m in msgs if m.text and any(w in m.text for w in words)]
+            if meow_msgs:
+                await client.delete_messages(chat_id, meow_msgs)
+        except Exception:
+            pass
 
 async def resume_automeow_tasks(client):
     uid = getattr(client, 'uid', None) or (await client.get_me()).id
@@ -316,7 +325,7 @@ async def automeow_command(ev):
         asyncio.create_task(start_automeow_schedule(client, cid, target_count=target_count))
     elif cmd == "off":
         set_chat_meow_mode(me_id, str_cid, "off")
-        await stop_automeow(client, cid)
+        await stop_automeow(client, cid, clear_scheduled=True)
         await safe_edit_or_silent(ev, "🐱 <b>بازی خودکار میویی در این چت غیرفعال شد.</b> 🔴", parse_mode='html')
     else:
         await safe_edit_or_silent(ev, "⚠️ <b>دستور نامعتبر. از <code>instant</code>, <code>schedule [تعداد]</code> یا <code>off</code> استفاده کنید.</b>", parse_mode='html')
